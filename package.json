@@ -1,0 +1,21 @@
+{
+  "name": "coolfly-promo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "30s CoolFly Urban / Dream Pro promo, rendered entirely with JavaScript (Three.js + Web Audio).",
+  "type": "module",
+  "scripts": {
+    "preview": "node scripts/serve.js",
+    "render": "node scripts/render.js --jobs 4",
+    "render:draft": "node scripts/render.js --jobs 4 --scale 0.5 --out out/coolfly-draft.mp4",
+    "stills": "node scripts/render.js --stills"
+  },
+  "dependencies": {
+    "@fontsource/chakra-petch": "5.1.0",
+    "@fontsource/inter": "5.1.0",
+    "three": "0.169.0"
+  },
+  "devDependencies": {
+    "playwright-core": "1.56.1"
+  }
+}
