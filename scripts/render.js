@@ -45,6 +45,8 @@ const browser = await chromium.launch({
   args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'],
 });
 const page = await browser.newPage({ viewport: { width: Math.round(1920 * scale), height: Math.round(1080 * scale) }, deviceScaleFactor: 1 });
+// Software WebGL under parallel load can be slow; never give up on a frame.
+page.setDefaultTimeout(0);
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') console.log('[page]', m.text()); });
 page.on('pageerror', (e) => console.log('[page error]', e.message));
 await page.goto(`http://127.0.0.1:${port}/?render&scale=${scale}`);
@@ -86,6 +88,8 @@ try {
 
     if (jobs > 1) {
       // Split the frame range across child processes, then stitch + add music.
+      // Free this process's browser so the workers get all the CPU.
+      await browser.close();
       const per = Math.ceil((last - first) / jobs);
       const segs = [];
       for (let j = 0; j < jobs; j++) {
