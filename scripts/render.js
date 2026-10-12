@@ -32,12 +32,20 @@ function findChromium() {
   return candidates.find((p) => fs.existsSync(p));
 }
 
+const children = new Set();
 function run(cmd, argv, opts = {}) {
   return new Promise((resolve, reject) => {
     const p = spawn(cmd, argv, { stdio: ['ignore', 'inherit', 'inherit'], ...opts });
-    p.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`))));
+    children.add(p);
+    p.on('exit', (code) => {
+      children.delete(p);
+      code === 0 ? resolve() : reject(new Error(`${cmd} exited ${code}`));
+    });
   });
 }
+// If one worker fails, stop the rest instead of leaving them running.
+const killChildren = () => { for (const c of children) c.kill('SIGTERM'); };
+process.on('exit', killChildren);
 
 const server = await startServer(port);
 const browser = await chromium.launch({
@@ -101,7 +109,7 @@ try {
       await Promise.all(segs.map((sg, j) => run(process.execPath, [
         fileURLToPath(import.meta.url), '--no-audio', '--scale', String(scale), '--from', String(sg.a / fps), '--to', String(sg.b / fps),
         '--out', sg.file, '--port', String(port + 1 + j),
-      ])));
+      ]))).catch((e) => { killChildren(); throw e; });
       const list = out.replace(/\.mp4$/, '.segs.txt');
       fs.writeFileSync(list, segs.map((sg) => `file '${sg.file}'`).join('\n'));
       await run('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list,
