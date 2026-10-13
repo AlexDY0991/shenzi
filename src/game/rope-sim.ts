@@ -18,8 +18,8 @@ export class RopeSim {
   readonly pts: P[] = [];
   /** 自然长度（单位） */
   rest: number;
-  /** 被勾住时绕路的长度（不设则按两端距离） */
-  targetLen: number | undefined = undefined;
+  /** 途经点：被别的毛线压住拽着时，毛线要绕过这些点（不设则走直线） */
+  via: Vec[] = [];
   /** 拖动中：自然长度不再变长，被拉远时毛线会变细 */
   holdRest = false;
   private ax: number;
@@ -81,7 +81,20 @@ export class RopeSim {
   step(dt: number): void {
     const d = Math.hypot(this.bx - this.ax, this.by - this.ay);
     // 拖动中自然长度只缩不长：拖远会被拉长变细，拖近不会皱成一团
-    const want = Math.max(d, this.targetLen ?? 0) * SLACK;
+    const path = [{ x: this.ax, y: this.ay }, ...this.via, { x: this.bx, y: this.by }];
+    const cum = [0];
+    for (let i = 1; i < path.length; i++) cum.push(cum[i - 1] + Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y));
+    const total = cum[cum.length - 1] || 1e-6;
+    /** 沿途经折线、按弧长比例 t 取点 */
+    const along = (t: number): Vec => {
+      const target = t * total;
+      let j = 1;
+      while (j < cum.length - 1 && cum[j] < target) j++;
+      const seg = cum[j] - cum[j - 1] || 1e-6;
+      const u = (target - cum[j - 1]) / seg;
+      return { x: path[j - 1].x + (path[j].x - path[j - 1].x) * u, y: path[j - 1].y + (path[j].y - path[j - 1].y) * u };
+    };
+    const want = Math.max(d, this.via.length ? total : 0) * SLACK;
     if (!this.holdRest || want < this.rest) this.rest += (want - this.rest) * Math.min(1, dt * (this.holdRest ? 12 : 6));
     const seg = this.rest / (N - 1);
     const damp = 0.86;
@@ -95,9 +108,11 @@ export class RopeSim {
       p.x += vx;
       p.y += vy;
       // 轻微拉向两端连线，保持画面和判定基本一致
-      const t = i / (N - 1);
-      p.x += (this.ax + (this.bx - this.ax) * t - p.x) * 0.035;
-      p.y += (this.ay + (this.by - this.ay) * t - p.y) * 0.035;
+      // 轻微拉向理想路径（直线，或被拽住时绕过途经点的折线），保持画面和判定一致
+      const q = along(i / (N - 1));
+      const pull = this.via.length ? 0.25 : 0.035;
+      p.x += (q.x - p.x) * pull;
+      p.y += (q.y - p.y) * pull;
     }
     this.pin();
     for (let it = 0; it < 8; it++) {

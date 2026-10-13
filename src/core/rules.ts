@@ -11,7 +11,7 @@ import { BoardGeo, LevelData } from './board';
  * - 两根毛线交叉（或一根压在另一根的纽扣上）就缠在一起，交叉处一根在上、一根在下。
  * - 挪动一根毛线时，它的纽扣是被拎起来放到新孔的：
  *   - 它压在上面的那些交叉，如果新位置不再交叉，就松开了（拎走了）；
- *   - 它被压在下面的那些交叉，无论挪到哪里都不会松开 —— 它还被勾着；
+ *   - 它被压在下面时拉不出来：新位置必须仍然从压住它的毛线底下穿过，否则不能放；
  *   - 新产生的交叉，它都在上面。
  * - 所以要从最上层的毛线开始一层层拆。一根毛线不再和任何毛线缠着时被理顺消除。
  *
@@ -94,6 +94,25 @@ export function canLift(R: Rules, pos: number[], k: number): boolean {
   return pos[k] >= 0 && !R.fixed[k] && sleepLeft(R, pos, k >> 1) === 0;
 }
 
+/**
+ * 被压住检查：端点 k 挪到 hole 后，它是否仍从所有压住它的毛线底下穿过。
+ * 返回会被"拉出来"的那根上层毛线（不能挪），-1 表示可以。
+ */
+export function pulledOutFrom(R: Rules, s: State, k: number, hole: number): number {
+  const r = k >> 1;
+  const pos = s.pos.slice();
+  pos[k] = hole;
+  for (const code of s.over) {
+    if (pairBottom(code) === r && !geomTangled(R, pos, r, pairTop(code))) return pairTop(code);
+  }
+  return -1;
+}
+
+/** 端点 k 能否挪到 hole：孔可放、端点能拿起、不会从压住它的毛线底下被拉出来 */
+export function canMoveTo(R: Rules, s: State, k: number, hole: number): boolean {
+  return canLift(R, s.pos, k) && canPlace(R, s.pos, hole) && pulledOutFrom(R, s, k, hole) < 0;
+}
+
 /** 把端点 k 挪到孔 hole（不检查合法性，不消除） */
 export function applyMove(R: Rules, s: State, k: number, hole: number): State {
   const r = k >> 1;
@@ -104,7 +123,7 @@ export function applyMove(R: Rules, s: State, k: number, hole: number): State {
     const top = pairTop(code);
     const bottom = pairBottom(code);
     if (top !== r && bottom !== r) over.add(code);
-    // 被压在下面：拎走也挣不脱，仍然勾着
+    // 被压在下面：合法的挪动一定还从它底下穿过，继续压着
     else if (bottom === r) over.add(code);
     // 压在上面：新位置还交叉才保留
     else if (geomTangled(R, pos, r, bottom)) over.add(code);
@@ -158,13 +177,13 @@ export function applyCut(s: State, rope: number): State {
 }
 
 /** 所有合法移动 [端点, 目标孔] */
-export function legalMoves(R: Rules, pos: number[]): [number, number][] {
+export function legalMoves(R: Rules, s: State): [number, number][] {
   const free: number[] = [];
-  for (let h = 0; h < R.geo.holeCount; h++) if (canPlace(R, pos, h)) free.push(h);
+  for (let h = 0; h < R.geo.holeCount; h++) if (canPlace(R, s.pos, h)) free.push(h);
   const moves: [number, number][] = [];
-  for (let k = 0; k < pos.length; k++) {
-    if (!canLift(R, pos, k)) continue;
-    for (const h of free) moves.push([k, h]);
+  for (let k = 0; k < s.pos.length; k++) {
+    if (!canLift(R, s.pos, k)) continue;
+    for (const h of free) if (pulledOutFrom(R, s, k, h) < 0) moves.push([k, h]);
   }
   return moves;
 }
