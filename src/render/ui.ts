@@ -16,13 +16,45 @@ export function hit(b: HitButton, x: number, y: number): boolean {
   return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
 }
 
-export function panel(ctx: Ctx2D, x: number, y: number, w: number, h: number, r: number, fill = THEME.panel): void {
+export function panel(ctx: Ctx2D, x: number, y: number, w: number, h: number, r: number, fill = THEME.panel, stitch = true): void {
   roundRectPath(ctx, x, y + 4, w, h, r);
-  ctx.fillStyle = 'rgba(120,80,40,0.16)';
+  ctx.fillStyle = 'rgba(200,120,90,0.16)';
   ctx.fill();
   roundRectPath(ctx, x, y, w, h, r);
   ctx.fillStyle = fill;
   ctx.fill();
+  if (stitch) {
+    ctx.save();
+    roundRectPath(ctx, x + 4, y + 4, w - 8, h - 8, Math.max(2, r - 4));
+    ctx.setLineDash([4, 3.5]);
+    ctx.strokeStyle = THEME.stitch;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/** 带猫耳朵的面板 */
+export function catEarPanel(ctx: Ctx2D, x: number, y: number, w: number, h: number, r: number): void {
+  for (const side of [0, 1]) {
+    const ex = side ? x + w - r * 0.9 : x + r * 0.9;
+    const dir = side ? 1 : -1;
+    ctx.beginPath();
+    ctx.moveTo(ex - dir * r * 0.55, y + 6);
+    ctx.lineTo(ex + dir * r * 0.15, y - r * 0.75);
+    ctx.lineTo(ex + dir * r * 0.75, y + 8);
+    ctx.closePath();
+    ctx.fillStyle = THEME.panel;
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(ex - dir * r * 0.2, y + 4);
+    ctx.lineTo(ex + dir * r * 0.15, y - r * 0.4);
+    ctx.lineTo(ex + dir * r * 0.45, y + 5);
+    ctx.closePath();
+    ctx.fillStyle = THEME.catPink;
+    ctx.fill();
+  }
+  panel(ctx, x, y, w, h, r);
 }
 
 /** 胶囊形大按钮 */
@@ -148,7 +180,8 @@ export function speechBubble(ctx: Ctx2D, right: number, cy: number, msg: string,
   const lines: string[] = [];
   let line = '';
   for (const ch of msg) {
-    if (line && ctx.measureText(line + ch).width > maxW) {
+    // 标点不放行首
+    if (line && ctx.measureText(line + ch).width > maxW && !'，。！？～…、'.includes(ch)) {
       lines.push(line);
       line = ch;
     } else line += ch;

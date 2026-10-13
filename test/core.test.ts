@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BoardGeo, LevelData, Puzzle } from '../src/core/puzzle';
+import { makeRules } from '../src/core/rules';
 import { solve } from '../src/core/solver';
 import levels from '../src/levels/levels.json';
 
@@ -33,8 +34,8 @@ test('挪动后理顺的毛线被消除，步数减一', () => {
 
 test('不能挪到被占用或不存在的孔', () => {
   const p = new Puzzle(level([[0, 0, 8], [1, 2, 6]]));
-  assert.equal(p.canMove(0, 2), false);
-  assert.equal(p.canMove(0, 99), false);
+  assert.equal(p.canMove(0, 'a', 2), false);
+  assert.equal(p.canMove(0, 'a', 99), false);
   assert.deepEqual(p.move(0, 'a', 2), []);
   assert.equal(p.stepsLeft, 5);
 });
@@ -58,12 +59,49 @@ test('预览能算出挪动后会被消除的毛线', () => {
   assert.deepEqual(p.previewCleared(1, 'a', 5), []);
 });
 
+// 4x4 棋盘上三根毛线：0 号 (0,0)-(3,3) 对角线，1 号 (3,0)-(0,3) 反对角线，2 号 (1,0)-(1,3) 竖线
+const full4 = ['####', '####', '####', '####'];
+function level4(extra: Partial<LevelData>): LevelData {
+  return { cols: 4, rows: 4, mask: full4, ropes: [[0, 0, 15], [1, 3, 12], [2, 1, 13]], steps: 9, par: 1, ...extra };
+}
+
+test('缝住的纽扣不能移动，另一端可以', () => {
+  const p = new Puzzle(level4({ fixed: [[0, 0]] }));
+  assert.equal(p.canLift(0, 'a'), false);
+  assert.equal(p.canLift(0, 'b'), true);
+  assert.deepEqual(p.move(0, 'a', 4), []);
+  assert.equal(p.stepsLeft, 9);
+});
+
+test('打盹的小猫：理顺够数量的毛线后才醒', () => {
+  const p = new Puzzle(level4({ sleepers: [[2, 1]] }));
+  assert.equal(p.sleepLeft(2), 1);
+  assert.equal(p.canLift(2, 'a'), false);
+  p.cut(1); // 剪掉一根，计数归零
+  assert.equal(p.sleepLeft(2), 0);
+  assert.equal(p.canLift(2, 'a'), true);
+});
+
+test('毛线锁：钥匙毛线理顺前孔不能放，理顺后打开', () => {
+  const p = new Puzzle(level4({ locks: [[5, 1]] }));
+  assert.equal(p.isFreeHole(5), false);
+  assert.deepEqual(p.activeLocks(), [[5, 1]]);
+  p.cut(1);
+  assert.equal(p.isFreeHole(5), true);
+  assert.deepEqual(p.activeLocks(), []);
+});
+
+test('所有纽扣都动不了时判为卡死', () => {
+  const p = new Puzzle(level4({ fixed: [[0, 0], [0, 1], [1, 0], [1, 1], [2, 0], [2, 1]] }));
+  assert.equal(p.isStuck, true);
+  assert.equal(p.isLost, true);
+});
+
 test('所有内置关卡开局每根毛线都缠着，且在给定步数内可解', () => {
   (levels as LevelData[]).forEach((lv, i) => {
     const p = new Puzzle(lv);
     for (const [id, n] of p.tangleCounts()) assert.ok(n > 0, `关卡${i + 1} 毛线${id} 开局就是松的`);
-    const geo = new BoardGeo(lv.cols, lv.rows, lv.mask);
-    const par = solve(geo, lv.ropes.map(([, a, b]) => [a, b]), 60);
+    const par = solve(makeRules(lv), p.pos, 300);
     assert.ok(par > 0 && par <= lv.steps, `关卡${i + 1} 求解 ${par} 步，给了 ${lv.steps} 步`);
   });
 });

@@ -34,6 +34,7 @@ export class App {
   /** 背景画一次缓存到离屏画布 */
   drawBackground(ctx: Ctx2D): void {
     const { width: w, height: h, dpr } = this.info;
+    if (w < 1 || h < 1) return;
     const key = `${w}x${h}@${dpr}`;
     if (!this.bg || this.bgKey !== key) {
       this.bg = this.platform.createOffscreen(Math.round(w * dpr), Math.round(h * dpr));
@@ -44,8 +45,11 @@ export class App {
     ctx.drawImage(this.bg.canvas, 0, 0, w, h);
   }
 
+  private fade = 0;
+
   go(scene: Scene): void {
     this.scene = scene;
+    this.fade = 1;
   }
 
   persist(): void {
@@ -58,9 +62,20 @@ export class App {
     this.last = now;
     this.scene.update(dt);
     const { ctx } = this.platform.screen;
-    const { dpr } = this.info;
+    const { dpr, width, height } = this.info;
+    if (width < 1 || height < 1) {
+      // 画布不可见（例如被隐藏的 iframe）时跳过绘制
+      this.platform.requestFrame(this.frame);
+      return;
+    }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.scene.render(ctx);
+    if (this.fade > 0) {
+      // 切换场景时淡入
+      ctx.fillStyle = `rgba(255,244,232,${this.fade})`;
+      ctx.fillRect(0, 0, this.info.width, this.info.height);
+      this.fade = Math.max(0, this.fade - dt * 4);
+    }
     this.platform.requestFrame(this.frame);
   };
 }

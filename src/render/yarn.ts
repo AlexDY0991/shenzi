@@ -94,8 +94,35 @@ export function drawYarn(ctx: Ctx2D, pts: Vec[], color: string, st: YarnStyle): 
     acc -= segLen;
   }
 
-  // 高光
+  // 绒毛：沿毛线边缘随机冒出的细小毛刺，让毛线看起来更软
   const ns = normals(pts);
+  ctx.strokeStyle = shade(color, 0.25, 0.7);
+  ctx.lineWidth = 1;
+  let seed = Math.floor(pts[0].x * 13 + pts[0].y * 7);
+  const rnd = () => {
+    seed = (seed * 9301 + 49297) % 233280;
+    return seed / 233280;
+  };
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p = pts[i];
+    const q = pts[i + 1];
+    for (let k = 0; k < 3; k++) {
+      const u = rnd();
+      const side = rnd() < 0.5 ? -1 : 1;
+      const cx = p.x + (q.x - p.x) * u;
+      const cy = p.y + (q.y - p.y) * u;
+      const ex = cx + ns[i].x * side * w * 0.5;
+      const ey = cy + ns[i].y * side * w * 0.5;
+      const len = w * (0.15 + rnd() * 0.2);
+      const a = Math.atan2(ns[i].y * side, ns[i].x * side) + (rnd() - 0.5) * 1.2;
+      ctx.beginPath();
+      ctx.moveTo(ex, ey);
+      ctx.lineTo(ex + Math.cos(a) * len, ey + Math.sin(a) * len);
+      ctx.stroke();
+    }
+  }
+
+  // 高光
   ctx.strokeStyle = shade(color, 0.45, 0.6);
   ctx.lineWidth = Math.max(1, w * 0.18);
   ctx.beginPath();
@@ -110,7 +137,21 @@ export function drawYarn(ctx: Ctx2D, pts: Vec[], color: string, st: YarnStyle): 
 }
 
 /** 纽扣（毛线两端的"钉子"）：四孔纽扣 + 交叉缝线 */
-export function drawButton(ctx: Ctx2D, x: number, y: number, r: number, color: string, opts: { lift?: number; ring?: string } = {}): void {
+export interface ButtonOpts {
+  lift?: number;
+  ring?: string;
+  /** 被缝住的纽扣：花边造型 + 粗缝线 */
+  sewn?: boolean;
+  /** 被戳时抖动（0~1） */
+  shake?: number;
+}
+
+export function drawButton(ctx: Ctx2D, x: number, y: number, r: number, color: string, opts: ButtonOpts = {}): void {
+  if (opts.shake) x += Math.sin(opts.shake * 40) * opts.shake * r * 0.25;
+  if (opts.sewn) {
+    drawSewnButton(ctx, x, y, r, color);
+    return;
+  }
   const lift = opts.lift ?? 0;
   ctx.save();
   // 阴影
@@ -170,6 +211,63 @@ export function drawButton(ctx: Ctx2D, x: number, y: number, r: number, color: s
   ctx.arc(0, 0, r * 0.86, Math.PI * 1.1, Math.PI * 1.55);
   ctx.strokeStyle = 'rgba(255,255,255,0.55)';
   ctx.lineWidth = r * 0.12;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** 缝住的纽扣：花瓣形边缘，四周有缝到垫子上的针脚 */
+function drawSewnButton(ctx: Ctx2D, x: number, y: number, r: number, color: string): void {
+  ctx.save();
+  ctx.translate(x, y);
+  // 缝到垫子上的针脚
+  ctx.strokeStyle = shade(color, -0.45);
+  ctx.lineWidth = r * 0.1;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 4; i++) {
+    const a = Math.PI / 4 + (i * Math.PI) / 2;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * r * 1.08, Math.sin(a) * r * 1.08);
+    ctx.lineTo(Math.cos(a) * r * 1.38, Math.sin(a) * r * 1.38);
+    ctx.stroke();
+  }
+  ellipsePath(ctx, 0, r * 0.2, r * 1.02, r * 0.92);
+  ctx.fillStyle = 'rgba(90,55,20,0.22)';
+  ctx.fill();
+  // 花瓣边
+  const petals = 8;
+  ctx.fillStyle = shade(color, -0.35);
+  for (let i = 0; i < petals; i++) {
+    const a = (i / petals) * Math.PI * 2;
+    fillCircle(ctx, Math.cos(a) * r * 0.74, Math.sin(a) * r * 0.74, r * 0.36, shade(color, -0.35));
+  }
+  for (let i = 0; i < petals; i++) {
+    const a = (i / petals) * Math.PI * 2;
+    fillCircle(ctx, Math.cos(a) * r * 0.74, Math.sin(a) * r * 0.74, r * 0.29, shade(color, 0.15));
+  }
+  fillCircle(ctx, 0, 0, r * 0.78, shade(color, 0.15));
+  fillCircle(ctx, 0, 0, r * 0.55, shade(color, -0.08));
+  // 粗缝线（十字 + 方框）
+  const o = r * 0.22;
+  ctx.strokeStyle = shade(color, -0.55);
+  ctx.lineWidth = r * 0.14;
+  ctx.beginPath();
+  ctx.moveTo(-o, -o);
+  ctx.lineTo(o, o);
+  ctx.moveTo(o, -o);
+  ctx.lineTo(-o, o);
+  ctx.stroke();
+  ctx.strokeStyle = THEME.thread;
+  ctx.lineWidth = r * 0.06;
+  ctx.beginPath();
+  ctx.moveTo(-o, -o);
+  ctx.lineTo(o, o);
+  ctx.moveTo(o, -o);
+  ctx.lineTo(-o, o);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.86, Math.PI * 1.1, Math.PI * 1.5);
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = r * 0.1;
   ctx.stroke();
   ctx.restore();
 }

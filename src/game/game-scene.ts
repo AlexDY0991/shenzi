@@ -4,8 +4,9 @@ import { Ctx2D, Surface } from '../platform/types';
 import { BoardLayout, drawBoard, toScreen } from '../render/board';
 import { basketBallPos, CatState, drawBasket, drawCat, newCatState } from '../render/cat';
 import { shade, THEME, yarnColor } from '../render/colors';
-import { fillCircle, heart, pawPrint, star, text } from '../render/shapes';
-import { badge, iconHome, iconRestart, iconScissors, iconSteps, panel, pillButton, roundButton, speechBubble } from '../render/ui';
+import { ellipsePath, fillCircle, heart, pawPrint, roundRectPath, star, text } from '../render/shapes';
+import { drawKitten, drawLock } from '../render/mechanics';
+import { badge, catEarPanel, iconHome, iconRestart, iconScissors, iconSteps, panel, pillButton, roundButton, speechBubble } from '../render/ui';
 import { drawButton, drawYarn, drawYarnBall } from '../render/yarn';
 import type { App } from './app';
 import { LEVELS } from './levels';
@@ -54,7 +55,35 @@ const WIND_TIME = 0.32;
 const FLY_TIME = 0.55;
 const STEP_PROP = 5;
 
-const TIPS_START = ['加油喵！', '慢慢来，不着急喵～', '毛线好乱呀…', '帮我理理毛线吧！'];
+/** 特殊机制介绍：在第一次出现的关卡开局弹出 */
+const MECHANICS = [
+  {
+    key: 'fixed' as const,
+    title: '缝住的纽扣',
+    lines: ['花边纽扣被线缝在垫子上了，', '拖不动。只能挪毛线的另一头。'],
+  },
+  {
+    key: 'sleepers' as const,
+    title: '打盹的小猫',
+    lines: ['小猫趴在毛线上睡觉，这根毛线', '暂时不能动。数字是还要理顺', '几团毛线，小猫才会醒。'],
+  },
+  {
+    key: 'locks' as const,
+    title: '毛线锁',
+    lines: ['上锁的孔不能放纽扣。', '理顺和锁同色的毛线，', '锁就会打开。'],
+  },
+];
+type Mechanic = (typeof MECHANICS)[number];
+
+interface PopAnim {
+  kind: 'kitten' | 'lock';
+  x: number;
+  y: number;
+  color: string;
+  t: number;
+}
+
+const TIPS_START = ['加油喵！', '慢慢来不着急～', '毛线好乱呀…', '帮我理理毛线吧！'];
 const TIPS_CLEAR = ['好耶！', '喵～理好一团！', '继续继续！', '干得漂亮喵！'];
 
 export class GameScene extends Scene {
@@ -81,6 +110,12 @@ export class GameScene extends Scene {
   private interacted = false;
   private earnedStars = 0;
   private busyAd = false;
+  private intro: Mechanic | null = null;
+  private shake: { rope: number; end: RopeEnd; t: number } | null = null;
+  private kittenWiggle = new Map<number, number>();
+  private pops: PopAnim[] = [];
+  private prevSleep = new Map<number, number>();
+  private prevLocks: [number, number][] = [];
 
   // 布局
   private topY = 0;
@@ -98,6 +133,40 @@ export class GameScene extends Scene {
     for (const r of this.puzzle.ropes) this.disp.set(r.id, this.holeEnds(r.a, r.b));
     this.onResize();
     this.say(levelIndex === 0 ? '拖动纽扣，把毛线解开喵～' : TIPS_START[levelIndex % TIPS_START.length], 3.5);
+    this.intro = MECHANICS.find((m) => LEVELS.findIndex((lv) => (lv[m.key]?.length ?? 0) > 0) === levelIndex) ?? null;
+    this.snapshotMechanics();
+  }
+
+  /** 记录小猫计数和锁的状态，用来在变化时播放动画 */
+  private snapshotMechanics(): void {
+    for (const r of this.puzzle.ropes) this.prevSleep.set(r.id, this.puzzle.sleepLeft(r.id));
+    this.prevLocks = this.puzzle.activeLocks();
+  }
+
+  private ropeMid(id: number): Vec {
+    const pts = this.screenCurve(this.disp.get(id)!);
+    return pts[Math.floor(pts.length / 2)];
+  }
+
+  /** 状态变化后：锁打开、小猫醒来 */
+  private afterChange(): void {
+    const still = new Set(this.puzzle.activeLocks().map(([h]) => h));
+    for (const [h, key] of this.prevLocks) {
+      if (still.has(h)) continue;
+      const g = this.puzzle.geo.pos(h);
+      const p = toScreen(this.layout, g.x, g.y);
+      this.pops.push({ kind: 'lock', x: p.x, y: p.y, color: yarnColor(this.puzzle.ropes[key].color), t: 0 });
+      this.say('咔哒～锁打开啦！', 1.6);
+    }
+    for (const r of this.puzzle.ropes) {
+      const before = this.prevSleep.get(r.id) ?? 0;
+      if (before > 0 && (this.puzzle.sleepLeft(r.id) === 0 || !r.alive)) {
+        const m = this.ropeMid(r.id);
+        this.pops.push({ kind: 'kitten', x: m.x, y: m.y, color: '', t: 0 });
+        if (r.alive) this.say('小猫醒啦，这根毛线能动了！', 2);
+      }
+    }
+    this.snapshotMechanics();
   }
 
   // ───────────── 布局 ─────────────
@@ -194,13 +263,27 @@ export class GameScene extends Scene {
   }
 
   protected pointerDown(x: number, y: number): void {
-    if (this.state !== 'play') return;
+    if (this.state !== 'play' || this.intro) return;
     if (this.scissorsMode) {
       const id = this.pickRope(x, y);
       if (id >= 0) this.useScissorsOn(id);
       return;
     }
     const pin = this.pickPin(x, y);
+    if (pin && !this.puzzle.canLift(pin.rope, pin.end)) {
+      // 拿不起来：缝住或小猫在睡觉
+      this.app.platform.vibrate(true);
+      this.app.platform.sfx.play('tap');
+      const nap = this.puzzle.sleepLeft(pin.rope);
+      if (nap > 0) {
+        this.kittenWiggle.set(pin.rope, 1);
+        this.say(`嘘…小猫在睡觉，再理顺 ${nap} 团就醒`, 2.2);
+      } else {
+        this.shake = { ...pin, t: 1 };
+        this.say('这颗纽扣被缝住啦，挪另一头试试', 2.2);
+      }
+      return;
+    }
     if (pin) {
       const g = this.toGrid(x, y);
       this.drag = { ...pin, gx: g.x, gy: g.y, startX: x, startY: y, moved: false };
@@ -263,13 +346,15 @@ export class GameScene extends Scene {
   }
 
   private commitMove(rope: number, end: RopeEnd, hole: number): void {
-    if (!this.puzzle.canMove(rope, hole)) return;
+    if (!this.puzzle.canMove(rope, end, hole)) return;
     const cleared = this.puzzle.move(rope, end, hole);
     this.stepsUsed++;
     this.app.platform.sfx.play('drop');
     this.app.platform.vibrate();
-    if (cleared.length) this.startClearing(cleared);
-    else if (this.puzzle.stepsLeft <= 2 && this.puzzle.stepsLeft > 0) this.say('步数不多了喵！');
+    if (cleared.length) {
+      this.startClearing(cleared);
+      this.afterChange();
+    } else if (this.puzzle.stepsLeft <= 2 && this.puzzle.stepsLeft > 0) this.say('步数不多了喵！');
   }
 
   private startClearing(ids: number[]): void {
@@ -319,6 +404,7 @@ export class GameScene extends Scene {
     this.scissorsMode = false;
     this.app.platform.sfx.play('snip');
     this.startClearing(this.puzzle.cut(id));
+    this.afterChange();
   }
 
   private useSteps(): void {
@@ -359,6 +445,17 @@ export class GameScene extends Scene {
         e.by += (tgt.by - e.by) * k;
       }
     }
+
+    if (this.shake) {
+      this.shake.t -= dt * 2.5;
+      if (this.shake.t <= 0) this.shake = null;
+    }
+    for (const [id, w] of this.kittenWiggle) {
+      if (w - dt * 2.5 <= 0) this.kittenWiggle.delete(id);
+      else this.kittenWiggle.set(id, w - dt * 2.5);
+    }
+    for (const p of this.pops) p.t += dt * 1.4;
+    this.pops = this.pops.filter((p) => p.t < 1);
 
     // 理顺的毛线：卷成球 -> 飞进篮子
     for (const c of this.clearing) {
@@ -499,9 +596,12 @@ export class GameScene extends Scene {
   draw(ctx: Ctx2D): void {
     this.app.drawBackground(ctx);
     this.drawBoardCached(ctx);
+    this.drawLocks(ctx);
     this.drawHoleHints(ctx);
     this.drawRopes(ctx);
+    this.drawKittens(ctx);
     this.drawClearing(ctx);
+    this.drawPops(ctx);
     this.drawTutorialHand(ctx);
     this.drawCatArea(ctx);
     this.drawTopBar(ctx);
@@ -509,6 +609,67 @@ export class GameScene extends Scene {
     this.drawParticles(ctx);
     if (this.state === 'won' && this.stateTime > 0.9) this.drawWinPanel(ctx);
     if (this.state === 'lost' && this.stateTime > 0.5) this.drawLosePanel(ctx);
+    if (this.intro) this.drawIntro(ctx, this.intro);
+  }
+
+  private drawLocks(ctx: Ctx2D): void {
+    const r = this.layout.cell * 0.25;
+    for (const [h, key] of this.puzzle.activeLocks()) {
+      const g = this.puzzle.geo.pos(h);
+      const p = toScreen(this.layout, g.x, g.y);
+      drawLock(ctx, p.x, p.y, r, yarnColor(this.puzzle.ropes[key].color), this.time + h);
+    }
+  }
+
+  private drawKittens(ctx: Ctx2D): void {
+    const s = this.layout.cell * 0.36;
+    for (const r of this.puzzle.aliveRopes) {
+      const n = this.puzzle.sleepLeft(r.id);
+      if (n <= 0) continue;
+      const m = this.ropeMid(r.id);
+      drawKitten(ctx, m.x, m.y - s * 0.1, s, this.time + r.id, n, 0, this.kittenWiggle.get(r.id) ?? 0);
+    }
+  }
+
+  private drawPops(ctx: Ctx2D): void {
+    for (const p of this.pops) {
+      if (p.kind === 'lock') drawLock(ctx, p.x, p.y, this.layout.cell * 0.25, p.color, this.time, p.t);
+      else drawKitten(ctx, p.x + p.t * this.layout.cell * 0.8, p.y, this.layout.cell * 0.36, this.time, 0, Math.max(0.01, p.t));
+    }
+  }
+
+  /** 新机制介绍卡片 */
+  private drawIntro(ctx: Ctx2D, m: Mechanic): void {
+    this.clearButtons();
+    const { width: W, height: H } = this.app.info;
+    this.dim(ctx, 1);
+    const pw = Math.min(W - 48, 320);
+    const ph = 250 + m.lines.length * 22;
+    const x = W / 2 - pw / 2;
+    const y = H / 2 - ph / 2;
+    panel(ctx, x, y, pw, ph, 26);
+    roundRectFill(ctx, W / 2 - 46, y - 14, 92, 28, 14, THEME.accent);
+    text(ctx, '新玩法', W / 2, y, 14, '#FFFFFF');
+    text(ctx, m.title, W / 2, y + 40, 22, THEME.text);
+    const cy = y + 104;
+    const r = 26;
+    fillCircle(ctx, W / 2, cy, 50, THEME.board);
+    if (m.key === 'fixed') drawButton(ctx, W / 2, cy, r, yarnColor(6), { sewn: true });
+    else if (m.key === 'sleepers') {
+      drawYarn(ctx, [{ x: W / 2 - 46, y: cy + 6 }, { x: W / 2 + 46, y: cy + 6 }], yarnColor(5), { width: 9 });
+      drawKitten(ctx, W / 2, cy, 30, this.time, 2);
+    } else drawLock(ctx, W / 2, cy + 4, r, yarnColor(7), this.time);
+    m.lines.forEach((ln, i) => text(ctx, ln, W / 2, y + 172 + i * 22, 15, THEME.textLight, { weight: 'normal' }));
+    const by = y + ph - 70;
+    const p = this.button('intro-ok', x + 40, by, pw - 80, 50, () => (this.intro = null));
+    pillButton(ctx, x + 40, by, pw - 80, 50, '知道了', '#79C267', p);
+  }
+
+  /** 卡死时用剪刀救场 */
+  private rescueWithScissors(): void {
+    this.state = 'play';
+    this.cat.mood = 'idle';
+    this.toggleScissors();
   }
 
   private drawBoardCached(ctx: Ctx2D): void {
@@ -571,8 +732,19 @@ export class GameScene extends Scene {
       const sel = this.selected && this.selected.rope === r.id ? this.selected.end : null;
       const dragEnd = lifted ? this.drag!.end : null;
       const ring = 'rgba(255,255,255,0.95)';
-      drawButton(ctx, pa.x, pa.y, pinR, color, { lift: dragEnd === 'a' ? 1 : 0, ring: sel === 'a' ? ring : undefined });
-      drawButton(ctx, pb.x, pb.y, pinR, color, { lift: dragEnd === 'b' ? 1 : 0, ring: sel === 'b' ? ring : undefined });
+      const sh = (end: RopeEnd) => (this.shake && this.shake.rope === r.id && this.shake.end === end ? this.shake.t : 0);
+      drawButton(ctx, pa.x, pa.y, pinR, color, {
+        lift: dragEnd === 'a' ? 1 : 0,
+        ring: sel === 'a' ? ring : undefined,
+        sewn: this.puzzle.isFixed(r.id, 'a'),
+        shake: sh('a'),
+      });
+      drawButton(ctx, pb.x, pb.y, pinR, color, {
+        lift: dragEnd === 'b' ? 1 : 0,
+        ring: sel === 'b' ? ring : undefined,
+        sewn: this.puzzle.isFixed(r.id, 'b'),
+        shake: sh('b'),
+      });
     }
   }
 
@@ -654,10 +826,10 @@ export class GameScene extends Scene {
     // 步数
     const steps = this.puzzle.stepsLeft;
     const low = steps <= Math.min(2, this.puzzle.level.steps - 2);
-    panel(ctx, 14, y, 78, 52, 16);
-    text(ctx, '步数', 53, y + 15, 12, THEME.textLight);
+    catEarPanel(ctx, 14, y + 4, 78, 50, 16);
+    text(ctx, '步数', 53, y + 18, 12, THEME.textLight);
     const pop = low ? 1 + 0.08 * Math.sin(this.time * 10) : 1;
-    text(ctx, String(steps), 53, y + 35, 22 * pop, low ? THEME.danger : THEME.text);
+    text(ctx, String(steps), 53, y + 37, 22 * pop, low ? THEME.danger : THEME.text);
     // 关卡
     panel(ctx, W / 2 - 52, y + 8, 104, 36, 18);
     text(ctx, `第 ${this.levelIndex + 1} 关`, W / 2, y + 26, 17, THEME.text);
@@ -727,9 +899,15 @@ export class GameScene extends Scene {
     ctx.translate(W / 2, H / 2);
     ctx.scale(s * pop, s * pop);
     ctx.translate(-W / 2, -H / 2);
+    const peek = { ...this.cat, mood: 'happy' as const, hop: 0, paw: 0 };
+    drawCat(ctx, W / 2, y + 44, 28, peek);
     panel(ctx, x, y, pw, ph, 26);
+    for (const side of [-1, 1]) {
+      // 搭在卡片边上的两只小爪子
+      ellipseFill(ctx, W / 2 + side * 22, y + 2, 13, 9, THEME.catCream, THEME.catLine);
+    }
     const last = this.levelIndex >= LEVELS.length - 1;
-    text(ctx, last ? '全部通关啦！' : '理好啦！', W / 2, y + 42, 26, THEME.text);
+    text(ctx, last ? '全部通关啦！' : '理好啦！', W / 2, y + 44, 26, THEME.text);
     for (let i = 0; i < 3; i++) {
       const on = i < this.earnedStars && t > 0.25 + i * 0.2;
       const sx = W / 2 + (i - 1) * 58;
@@ -766,7 +944,8 @@ export class GameScene extends Scene {
     ctx.scale(s, s);
     ctx.translate(-W / 2, -H / 2);
     panel(ctx, x, y, pw, ph, 26);
-    text(ctx, '步数用完啦…', W / 2, y + 42, 24, THEME.text);
+    const stuck = this.puzzle.stepsLeft > 0;
+    text(ctx, stuck ? '没有能动的纽扣了…' : '步数用完啦…', W / 2, y + 42, 22, THEME.text);
     const left = this.puzzle.aliveRopes;
     text(ctx, `还有 ${left.length} 团毛线没理好`, W / 2, y + 78, 14, THEME.textLight, { weight: 'normal' });
     left.slice(0, 6).forEach((r, i) => {
@@ -776,10 +955,31 @@ export class GameScene extends Scene {
     ctx.restore();
     if (s < 1) return;
     const bw = pw - 64;
-    const label = this.app.save.steps > 0 ? `用道具 +${STEP_PROP} 步（剩 ${this.app.save.steps}）` : `看广告 +${STEP_PROP} 步`;
-    const p1 = this.button('more', x + 32, y + 160, bw, 52, () => this.useSteps());
+    const label = stuck
+      ? this.app.save.scissors > 0
+        ? `用剪刀剪一根（剩 ${this.app.save.scissors}）`
+        : '看广告领剪刀'
+      : this.app.save.steps > 0
+        ? `用道具 +${STEP_PROP} 步（剩 ${this.app.save.steps}）`
+        : `看广告 +${STEP_PROP} 步`;
+    const p1 = this.button('more', x + 32, y + 160, bw, 52, () => (stuck ? this.rescueWithScissors() : this.useSteps()));
     pillButton(ctx, x + 32, y + 160, bw, 52, label, '#79C267', p1);
     const p2 = this.button('retry', x + 32, y + 226, bw, 48, () => this.restart());
     pillButton(ctx, x + 32, y + 226, bw, 48, '重新开始', THEME.accent, p2);
   }
+}
+
+function roundRectFill(ctx: Ctx2D, x: number, y: number, w: number, h: number, r: number, color: string): void {
+  roundRectPath(ctx, x, y, w, h, r);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function ellipseFill(ctx: Ctx2D, x: number, y: number, rx: number, ry: number, fill: string, stroke: string): void {
+  ellipsePath(ctx, x, y, rx, ry);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 2;
+  ctx.stroke();
 }

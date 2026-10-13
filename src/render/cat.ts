@@ -137,6 +137,26 @@ export function drawCat(ctx: Ctx2D, x: number, y: number, s: number, st: CatStat
   }
   ctx.stroke();
 
+  // 项圈和小铃铛
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.6, hy + s * 0.78);
+  ctx.quadraticCurveTo(0, hy + s * 1.08, s * 0.6, hy + s * 0.78);
+  ctx.strokeStyle = '#E8605A';
+  ctx.lineWidth = s * 0.16;
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  fillCircle(ctx, 0, hy + s * 1.02, s * 0.15, '#F7C843');
+  ctx.beginPath();
+  ctx.arc(0, hy + s * 1.02, s * 0.15, 0, Math.PI * 2);
+  ctx.strokeStyle = '#C98A1E';
+  ctx.lineWidth = s * 0.04;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, hy + s * 1.04);
+  ctx.lineTo(0, hy + s * 1.15);
+  ctx.stroke();
+  fillCircle(ctx, -s * 0.05, hy + s * 0.97, s * 0.04, 'rgba(255,255,255,0.8)');
+
   // 腮红
   fillEllipse(ctx, -s * 0.62, hy + s * 0.28, s * 0.16, s * 0.1, 'rgba(247,140,160,0.45)');
   fillEllipse(ctx, s * 0.62, hy + s * 0.28, s * 0.16, s * 0.1, 'rgba(247,140,160,0.45)');

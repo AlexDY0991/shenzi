@@ -28,12 +28,36 @@ const webOpts = {
 };
 const wxOpts = { ...common, entryPoints: ['src/entry/wechat.ts'], outfile: 'dist/wechat/game.js' };
 
+// GitHub Pages 站点：展示页 + 全屏试玩页
+const siteOpts = {
+  ...common,
+  entryPoints: ['site/landing.ts'],
+  outfile: 'dist/site/landing.js',
+  plugins: [
+    {
+      name: 'site-html',
+      setup: (b) =>
+        b.onEnd((r) => {
+          if (r.errors.length) return;
+          const js = readFileSync('dist/site/landing.js', 'utf8').replace(/<\/script/g, '<\\/script');
+          const html = readFileSync('site/index.html', 'utf8').replace('<script>/*BUNDLE*/</script>', () => `<script>${js}</script>`);
+          writeFileSync('dist/site/index.html', html);
+          copyFileSync('dist/web/index.html', 'dist/site/play.html');
+        }),
+    },
+  ],
+};
+mkdirSync('dist/site', { recursive: true });
+
 if (watch) {
   const [w, x] = await Promise.all([esbuild.context(webOpts), esbuild.context(wxOpts)]);
   await Promise.all([w.watch(), x.watch()]);
+  const site = await esbuild.context(siteOpts);
+  await site.watch();
   console.log('watching… 打开 dist/web/index.html 预览');
 } else {
   await Promise.all([esbuild.build(webOpts), esbuild.build(wxOpts)]);
+  await esbuild.build(siteOpts);
   // 微信小游戏包里不能出现浏览器专属全局对象
   const wx = readFileSync('dist/wechat/game.js', 'utf8');
   const banned = ['document.', 'window.', 'localStorage', 'navigator.', 'Path2D', '.roundRect(', '.ellipse('].filter((k) => wx.includes(k));

@@ -1,8 +1,8 @@
 import { ropeCurve } from '../core/geometry';
 import { Ctx2D } from '../platform/types';
 import { CatState, drawCat, newCatState } from '../render/cat';
-import { THEME, yarnColor } from '../render/colors';
-import { pawPrint, roundRectPath, star, text } from '../render/shapes';
+import { shade, THEME, yarnColor } from '../render/colors';
+import { fillCircle, pawPrint, star, text } from '../render/shapes';
 import { panel, pillButton } from '../render/ui';
 import { drawYarn, drawYarnBall } from '../render/yarn';
 import type { App } from './app';
@@ -47,8 +47,24 @@ export class TitleScene extends Scene {
     // 标题
     const ty = safeTop + Math.max(70, H * 0.13);
     const bob = Math.sin(this.time * 2) * 3;
-    text(ctx, '喵喵理毛线', W / 2, ty + bob, Math.min(48, W * 0.12), '#F39A3D', { stroke: '#FFFFFF', strokeW: 10 });
-    text(ctx, '解开毛线 · 治愈烧脑', W / 2, ty + 46, 15, THEME.textLight, { weight: 'normal' });
+    // 每个字一种毛线色，依次上下跳动
+    const title = '喵喵理毛线';
+    const size = Math.min(50, W * 0.125);
+    const colors = [0, 1, 7, 4, 6];
+    [...title].forEach((ch, i) => {
+      const x = W / 2 + (i - (title.length - 1) / 2) * size * 1.04;
+      const y = ty + Math.sin(this.time * 2.4 - i * 0.6) * 4;
+      const rot = Math.sin(this.time * 1.2 + i) * 0.05;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rot);
+      text(ctx, ch, 0, 4, size, shade(yarnColor(colors[i]), -0.35), { stroke: '#FFFFFF', strokeW: 12 });
+      text(ctx, ch, 0, 0, size, yarnColor(colors[i]), { stroke: '#FFFFFF', strokeW: 10 });
+      ctx.restore();
+    });
+    void bob;
+    panel(ctx, W / 2 - 92, ty + 34, 184, 30, 15);
+    text(ctx, '解开毛线 · 治愈烧脑', W / 2, ty + 49, 14, THEME.textLight);
 
     // 小猫拍毛线球
     const s = Math.min(58, W * 0.14, H * 0.065);
@@ -104,27 +120,25 @@ export class TitleScene extends Scene {
     text(ctx, '选择关卡', W / 2, y + 34, 20, THEME.text);
     const close = this.button('close', x + pw - 50, y + 12, 40, 40, () => (this.showLevels = false));
     text(ctx, '✕', x + pw - 30, y + 32 + (close ? 2 : 0), 20, THEME.textLight);
-    LEVELS.forEach((_, i) => {
+    LEVELS.forEach((lv, i) => {
       const tx = x + 20 + (i % cols) * tile;
       const ty = y + 64 + Math.floor(i / cols) * tile;
       const open = DEMO_UNLOCK_ALL || i <= this.app.save.unlocked;
-      const pressed = open ? this.button(`lv${i}`, tx + 4, ty + 4, tile - 8, tile - 8, () => this.start(i)) : false;
-      const dy = pressed ? 2 : 0;
-      roundRectPath(ctx, tx + 4, ty + 7, tile - 8, tile - 8, 14);
-      ctx.fillStyle = open ? '#E3B57A' : '#DCCDB8';
-      ctx.fill();
-      roundRectPath(ctx, tx + 4, ty + 4 + dy, tile - 8, tile - 8, 14);
-      ctx.fillStyle = open ? '#FFE3BC' : '#EEE4D6';
-      ctx.fill();
+      const pressed = open ? this.button(`lv${i}`, tx + 2, ty + 2, tile - 4, tile - 4, () => this.start(i)) : false;
       const mx = tx + tile / 2;
+      const my = ty + tile * 0.42 + (pressed ? 2 : 0);
+      const r = tile * 0.33;
+      // 每关是一团毛线球
+      drawYarnBall(ctx, mx, my, r, open ? yarnColor(lv.ropes[0][0]) : '#D9CDBE', i * 0.9);
       if (open) {
-        text(ctx, String(i + 1), mx, ty + tile * 0.42 + dy, tile * 0.3, THEME.text);
+        fillCircle(ctx, mx, my, r * 0.62, 'rgba(255,255,255,0.92)');
+        text(ctx, String(i + 1), mx, my + 1, r * 0.75, THEME.text);
         const got = this.app.save.stars[i] ?? 0;
         for (let k = 0; k < 3; k++) {
-          star(ctx, mx + (k - 1) * tile * 0.2, ty + tile * 0.72 + dy, tile * 0.085, k < got ? '#F7C843' : '#E2CFB5');
+          star(ctx, mx + (k - 1) * tile * 0.2, ty + tile * 0.86, tile * 0.08, k < got ? '#F7C843' : '#E8D5BE');
         }
       } else {
-        pawPrint(ctx, mx, ty + tile / 2, tile * 0.22, '#CBB79C');
+        pawPrint(ctx, mx, my, r * 0.6, 'rgba(255,255,255,0.85)');
       }
     });
   }

@@ -1,4 +1,4 @@
-// 毛线配色：9 种，保证相邻色差明显
+// 毛线配色：10 种，保证相邻色差明显
 export const YARN_COLORS = [
   '#E8605A', // 红
   '#F39A3D', // 橙
@@ -9,17 +9,20 @@ export const YARN_COLORS = [
   '#9C6ADE', // 紫
   '#F08BB8', // 粉
   '#3D5A99', // 藏青
+  '#A8C93E', // 草绿
 ];
 
 export const THEME = {
-  bg: '#FFF6EA',
-  bgPaw: '#F6E6CF',
-  board: '#F4E2C6',
-  boardEdge: '#DDBB8F',
-  boardKnit: 'rgba(170,120,60,0.10)',
-  hole: '#E2C49A',
-  holeDeep: '#CFAA79',
-  holeStitch: '#D2AE80',
+  bg: '#FFF4E8',
+  bgTop: '#FFE4E6',
+  stitch: '#F0B898',
+  bgPaw: 'rgba(240,190,170,0.28)',
+  board: '#FFF0DD',
+  boardEdge: '#F1C7A2',
+  boardKnit: 'rgba(225,160,110,0.16)',
+  hole: '#F3D3B0',
+  holeDeep: '#E2B48A',
+  holeStitch: '#EDB596',
   text: '#6B4A2E',
   textLight: '#A07A55',
   panel: '#FFFDF8',
