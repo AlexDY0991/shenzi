@@ -20,7 +20,7 @@ export interface Rules {
   lockKey: number[];
 }
 
-export function makeRules(level: LevelData, geo = new BoardGeo(level.cols, level.rows, level.mask)): Rules {
+export function makeRules(level: LevelData, geo = new BoardGeo(level.holes)): Rules {
   const n = level.ropes.length;
   const fixed = new Array(n * 2).fill(false);
   for (const [r, end] of level.fixed ?? []) fixed[r * 2 + end] = true;

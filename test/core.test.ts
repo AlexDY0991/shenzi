@@ -5,20 +5,26 @@ import { makeRules } from '../src/core/rules';
 import { solve } from '../src/core/solver';
 import levels from '../src/levels/levels.json';
 
-const full3: string[] = ['###', '###', '###'];
+/** 网格孔位：孔号 = 行 * cols + 列 */
+function grid(cols: number, rows: number): [number, number][] {
+  const out: [number, number][] = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) out.push([c, r]);
+  return out;
+}
+const full3 = grid(3, 3);
 
 function level(ropes: [number, number, number][], steps = 5): LevelData {
-  return { cols: 3, rows: 3, mask: full3, ropes, steps, par: 1 };
+  return { holes: full3, pieces: [], ropes, steps, par: 1 };
 }
 
 test('交叉的两根毛线判定为缠绕，平行的不缠绕', () => {
-  const geo = new BoardGeo(3, 3, full3);
+  const geo = new BoardGeo(full3);
   assert.equal(geo.tangled(0, 8, 2, 6), true);
   assert.equal(geo.tangled(0, 6, 2, 8), false);
 });
 
 test('毛线压在别人的纽扣上也算缠绕', () => {
-  const geo = new BoardGeo(3, 3, full3);
+  const geo = new BoardGeo(full3);
   // 竖线 1->7 正好穿过孔 4，另一根毛线的纽扣在 4
   assert.equal(geo.tangled(1, 7, 4, 5), true);
 });
@@ -60,9 +66,9 @@ test('预览能算出挪动后会被消除的毛线', () => {
 });
 
 // 4x4 棋盘上三根毛线：0 号 (0,0)-(3,3) 对角线，1 号 (3,0)-(0,3) 反对角线，2 号 (1,0)-(1,3) 竖线
-const full4 = ['####', '####', '####', '####'];
+const full4 = grid(4, 4);
 function level4(extra: Partial<LevelData>): LevelData {
-  return { cols: 4, rows: 4, mask: full4, ropes: [[0, 0, 15], [1, 3, 12], [2, 1, 13]], steps: 9, par: 1, ...extra };
+  return { holes: full4, pieces: [], ropes: [[0, 0, 15], [1, 3, 12], [2, 1, 13]], steps: 9, par: 1, ...extra };
 }
 
 test('缝住的纽扣不能移动，另一端可以', () => {
@@ -98,7 +104,7 @@ test('所有纽扣都动不了时判为卡死', () => {
 });
 
 test('所有内置关卡开局每根毛线都缠着，且在给定步数内可解', () => {
-  (levels as LevelData[]).forEach((lv, i) => {
+  (levels as unknown as LevelData[]).forEach((lv, i) => {
     const p = new Puzzle(lv);
     for (const [id, n] of p.tangleCounts()) assert.ok(n > 0, `关卡${i + 1} 毛线${id} 开局就是松的`);
     const par = solve(makeRules(lv), p.pos, 300);
