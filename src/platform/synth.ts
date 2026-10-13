@@ -27,7 +27,7 @@ export interface AudioCtxLike {
   createGain(): GainLike;
 }
 
-type Note = { f: number; f2?: number; at: number; dur: number; type?: string; vol?: number };
+export type Note = { f: number; f2?: number; at: number; dur: number; type?: string; vol?: number };
 
 const SOUNDS: Record<Parameters<Sfx['play']>[0], Note[]> = {
   pick: [{ f: 520, f2: 820, at: 0, dur: 0.09, type: 'sine', vol: 0.25 }],
@@ -58,13 +58,16 @@ export function createSynth(getCtx: () => AudioCtxLike | null): Sfx {
   const sfx: Sfx = {
     enabled: true,
     play(name) {
+      sfx.tone(SOUNDS[name]);
+    },
+    tone(notes) {
       if (!sfx.enabled) return;
       const ac = getCtx();
       if (!ac) return;
       try {
         if (ac.state === 'suspended' && ac.resume) ac.resume();
         const t0 = ac.currentTime + 0.01;
-        for (const n of SOUNDS[name]) {
+        for (const n of notes) {
           const osc = ac.createOscillator();
           const g = ac.createGain();
           osc.type = n.type ?? 'sine';

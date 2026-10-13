@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src", "tools", "test", "site", "proto3d"]
+  "include": ["src", "tools", "test", "site", "proto3d", "proto2d"]
 }
