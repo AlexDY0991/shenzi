@@ -1,0 +1,9 @@
+{
+  "description": "喵喵理毛线 - 微信小游戏工程（由 npm run build 生成到 dist/wechat）",
+  "compileType": "game",
+  "appid": "touristappid",
+  "projectname": "yarn-cat",
+  "libVersion": "3.0.0",
+  "setting": { "es6": true, "minified": true, "urlCheck": false },
+  "condition": {}
+}
