@@ -83,11 +83,16 @@ requestAnimationFrame(frame);
 drawPaws();
 window.addEventListener('resize', drawPaws);
 
+// 试玩页带上版本号，避免浏览器拿缓存里的旧版
+const playUrl = `play.html?v=${encodeURIComponent(__BUILD__)}`;
+(document.getElementById('play-link') as HTMLAnchorElement).href = playUrl;
+document.getElementById('build')!.textContent = __BUILD__;
+
 // 只有宽屏才在页面里嵌入试玩（窄屏直接点按钮进全屏试玩页）
 const wide = window.matchMedia('(min-width: 861px)');
 const frameEl = document.getElementById('play-frame') as HTMLIFrameElement;
 const loadFrame = () => {
-  if (wide.matches && !frameEl.src) frameEl.src = 'play.html';
+  if (wide.matches && !frameEl.src) frameEl.src = playUrl;
 };
 loadFrame();
 wide.addEventListener('change', loadFrame);

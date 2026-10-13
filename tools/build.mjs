@@ -2,8 +2,31 @@
 import * as esbuild from 'esbuild';
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
+import { execSync } from 'node:child_process';
+
 const watch = process.argv.includes('--watch');
-const common = { bundle: true, format: 'iife', target: 'es2017', minify: !watch, legalComments: 'none', logLevel: 'info' };
+
+// 版本号：北京时间构建时间 + 提交号，显示在标题页和展示页底部
+function buildStamp() {
+  let sha = 'dev';
+  try {
+    sha = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch {
+    // 不在 git 仓库里
+  }
+  const t = new Date(Date.now() + 8 * 3600 * 1000).toISOString();
+  return `${t.slice(5, 10)} ${t.slice(11, 16)} · ${sha}`;
+}
+
+const common = {
+  bundle: true,
+  format: 'iife',
+  target: 'es2017',
+  minify: !watch,
+  legalComments: 'none',
+  logLevel: 'info',
+  define: { __BUILD__: JSON.stringify(buildStamp()) },
+};
 
 function writeWebHtml() {
   const js = readFileSync('dist/web/main.js', 'utf8').replace(/<\/script/g, '<\\/script');
