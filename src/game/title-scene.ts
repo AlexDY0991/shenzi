@@ -97,7 +97,7 @@ export class TitleScene extends Scene {
       this.app.persist();
     });
     text(ctx, sound ? '音效：开' : '音效：关', W / 2, by + 154 + (p3 ? 2 : 0), 14, THEME.textLight);
-    text(ctx, '演示版 Demo', W / 2, H - this.app.info.safeBottom - 16, 11, '#C9AE8C', { weight: 'normal' });
+    text(ctx, `演示版 · ${__BUILD__}`, W / 2, H - this.app.info.safeBottom - 16, 11, '#C9AE8C', { weight: 'normal' });
 
     if (this.showLevels) this.drawLevelSelect(ctx);
   }
