@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BoardGeo, LevelData, Puzzle } from '../src/core/puzzle';
-import { makeRules } from '../src/core/rules';
+import { legalMoves, makeRules } from '../src/core/rules';
 import { solve } from '../src/core/solver';
 import levels from '../src/levels/levels.json';
 
@@ -133,5 +133,36 @@ test('所有内置关卡开局每根毛线都缠着，且在给定步数内可�
     for (const [id, n] of p.tangleCounts()) assert.ok(n > 0, `关卡${i + 1} 毛线${id} 开局就是松的`);
     const par = solve(makeRules(lv), p.state, 300);
     assert.ok(par > 0 && par <= lv.steps, `关卡${i + 1} 求解 ${par} 步，给了 ${lv.steps} 步`);
+  });
+});
+
+test('画面与规则一致：任何时候缠着的毛线对在几何上都真的交叉或重叠', () => {
+  // 每关随机走 200 局、每局最多 30 步（含剪刀），检查不会出现"看起来分开了却还算缠着"
+  let seed = 12345;
+  const rnd = () => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed / 2147483648;
+  };
+  (levels as unknown as LevelData[]).forEach((lv, li) => {
+    for (let game = 0; game < 200; game++) {
+      const p = new Puzzle({ ...lv, steps: 99 });
+      for (let step = 0; step < 30 && !p.isWon; step++) {
+        const alive = p.aliveRopes;
+        if (rnd() < 0.05) p.cut(alive[Math.floor(rnd() * alive.length)].id);
+        else {
+          const moves = legalMoves(p.rules, p.state);
+          if (!moves.length) break;
+          const [k, h] = moves[Math.floor(rnd() * moves.length)];
+          p.move(k >> 1, k & 1 ? 'b' : 'a', h);
+        }
+        for (const { top, bottom } of p.tangledPairs()) {
+          const t = p.ropes[top];
+          const b = p.ropes[bottom];
+          assert.ok(t.alive && b.alive, `关卡${li + 1}：已消除的毛线还留在缠绕关系里`);
+          assert.ok(p.geo.tangled(t.a, t.b, b.a, b.b), `关卡${li + 1} 第${game}局第${step}步：毛线 ${top}/${bottom} 已分开却仍算缠着`);
+        }
+        for (const [id, n] of p.tangleCounts()) assert.ok(n > 0, `关卡${li + 1}：毛线 ${id} 已经自由却没被消除`);
+      }
+    }
   });
 });

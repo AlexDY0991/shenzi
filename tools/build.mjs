@@ -18,6 +18,8 @@ function buildStamp() {
   return `${t.slice(5, 10)} ${t.slice(11, 16)} · ${sha}`;
 }
 
+const STAMP = buildStamp();
+
 const common = {
   bundle: true,
   format: 'iife',
@@ -25,7 +27,7 @@ const common = {
   minify: !watch,
   legalComments: 'none',
   logLevel: 'info',
-  define: { __BUILD__: JSON.stringify(buildStamp()) },
+  define: { __BUILD__: JSON.stringify(STAMP) },
 };
 
 function writeWebHtml() {
@@ -66,6 +68,8 @@ const siteOpts = {
           const html = readFileSync('site/index.html', 'utf8').replace('<script>/*BUNDLE*/</script>', () => `<script>${js}</script>`);
           writeFileSync('dist/site/index.html', html);
           copyFileSync('dist/web/index.html', 'dist/site/play.html');
+          // 试玩页启动时读取它，发现自己是旧版就自动刷新
+          writeFileSync('dist/site/version.json', JSON.stringify({ build: STAMP }) + '\n');
         }),
     },
   ],
