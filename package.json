@@ -1,0 +1,28 @@
+{
+  "name": "yarn-cat",
+  "version": "1.0.0",
+  "description": "喵喵理毛线 - 解绳子益智小游戏",
+  "scripts": {
+    "levels": "esbuild tools/gen-levels.ts --bundle --platform=node --format=esm --outfile=dist/tools/gen-levels.mjs --log-level=warning && node dist/tools/gen-levels.mjs",
+    "test": "esbuild test/*.test.ts --bundle --platform=node --format=esm --outdir=dist/test --out-extension:.js=.mjs --log-level=warning && node --test \"dist/test/*.mjs\"",
+    "typecheck": "tsc",
+    "build": "node tools/build.mjs",
+    "dev": "node tools/build.mjs --watch"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlexDY0991/shenzi.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/AlexDY0991/shenzi/issues"
+  },
+  "homepage": "https://github.com/AlexDY0991/shenzi#readme",
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.3"
+  },
+  "private": true
+}
