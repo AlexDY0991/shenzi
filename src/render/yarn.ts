@@ -280,6 +280,23 @@ export function drawButton(ctx: Ctx2D, x: number, y: number, r: number, color: s
  * 环扣：上层毛线 U 在交叉点 H 勾住下层毛线 L。
  * 先把 L 在交叉处压回到 U 上面，再在 L 两侧各画一道 U 的绕圈，看起来像 U 绕过 L 打了个扣。
  */
+/** 在交叉点 h 附近把这根毛线的一小段重画一遍（用来修正叠放顺序：让它盖在另一根上面） */
+export function drawYarnPatch(ctx: Ctx2D, h: Vec, pts: Vec[], color: string, w: number, seed: number): void {
+  let best = 0;
+  let bd = Infinity;
+  pts.forEach((p, i) => {
+    const d = Math.hypot(p.x - h.x, p.y - h.y);
+    if (d < bd) {
+      bd = d;
+      best = i;
+    }
+  });
+  const piece: Vec[] = [];
+  for (let i = best; i >= 0 && Math.hypot(pts[i].x - h.x, pts[i].y - h.y) < w * 2.2; i--) piece.unshift(pts[i]);
+  for (let i = best + 1; i < pts.length && Math.hypot(pts[i].x - h.x, pts[i].y - h.y) < w * 2.2; i++) piece.push(pts[i]);
+  if (piece.length >= 2) drawYarn(ctx, piece, color, { width: w, flat: true, noFuzz: true, seed });
+}
+
 export function drawYarnWrap(ctx: Ctx2D, h: Vec, lowerPts: Vec[], upperColor: string, lowerColor: string, w: number, seed: number): void {
   // L 在交叉处附近的一小段
   let best = 0;

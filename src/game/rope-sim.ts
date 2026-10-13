@@ -18,6 +18,8 @@ export class RopeSim {
   readonly pts: P[] = [];
   /** 自然长度（单位） */
   rest: number;
+  /** 被勾住时绕路的长度（不设则按两端距离） */
+  targetLen: number | undefined = undefined;
   /** 拖动中：自然长度不再变长，被拉远时毛线会变细 */
   holdRest = false;
   private ax: number;
@@ -79,7 +81,7 @@ export class RopeSim {
   step(dt: number): void {
     const d = Math.hypot(this.bx - this.ax, this.by - this.ay);
     // 拖动中自然长度只缩不长：拖远会被拉长变细，拖近不会皱成一团
-    const want = d * SLACK;
+    const want = Math.max(d, this.targetLen ?? 0) * SLACK;
     if (!this.holdRest || want < this.rest) this.rest += (want - this.rest) * Math.min(1, dt * (this.holdRest ? 12 : 6));
     const seg = this.rest / (N - 1);
     const damp = 0.86;

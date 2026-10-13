@@ -38,6 +38,26 @@ test('挪动后理顺的毛线被消除，步数减一', () => {
   assert.equal(p.stepsLeft, 4);
 });
 
+test('被压在下面的毛线挪开也挣不脱，仍然缠着', () => {
+  // 1 号在上、0 号在下（数组靠后的在上）
+  const p = new Puzzle(level([[0, 0, 8], [1, 2, 6]]));
+  assert.deepEqual(p.tangledPairs(), [{ top: 1, bottom: 0 }]);
+  // 把下面那根挪到最上排：几何上不再交叉，但它被勾着，不会消除
+  assert.deepEqual(p.move(0, 'b', 1), []);
+  assert.deepEqual(p.tangledPairs(), [{ top: 1, bottom: 0 }]);
+  // 把上面那根拎走，两根才一起解开
+  assert.deepEqual(p.move(1, 'a', 5).sort(), [0, 1]);
+  assert.equal(p.isWon, true);
+});
+
+test('压在上面的毛线挪到新位置还交叉时，依然压着；新交叉里挪动的那根在上', () => {
+  const p = new Puzzle(level([[0, 0, 8], [1, 2, 6]]));
+  p.move(1, 'a', 5); // (2,1)-(0,2) 仍和对角线交叉
+  assert.deepEqual(p.tangledPairs(), [{ top: 1, bottom: 0 }]);
+  p.move(0, 'a', 1); // 0 号挪动，但它在下面：仍勾着
+  assert.deepEqual(p.tangledPairs(), [{ top: 1, bottom: 0 }]);
+});
+
 test('不能挪到被占用或不存在的孔', () => {
   const p = new Puzzle(level([[0, 0, 8], [1, 2, 6]]));
   assert.equal(p.canMove(0, 'a', 2), false);
@@ -107,7 +127,7 @@ test('所有内置关卡开局每根毛线都缠着，且在给定步数内可�
   (levels as unknown as LevelData[]).forEach((lv, i) => {
     const p = new Puzzle(lv);
     for (const [id, n] of p.tangleCounts()) assert.ok(n > 0, `关卡${i + 1} 毛线${id} 开局就是松的`);
-    const par = solve(makeRules(lv), p.pos, 300);
+    const par = solve(makeRules(lv), p.state, 300);
     assert.ok(par > 0 && par <= lv.steps, `关卡${i + 1} 求解 ${par} 步，给了 ${lv.steps} 步`);
   });
 });
