@@ -76,15 +76,38 @@ const siteOpts = {
 };
 mkdirSync('dist/site', { recursive: true });
 
+// 3D 样张（Three.js），单独一个页面：dist/site/proto3d.html
+const protoOpts = {
+  ...common,
+  entryPoints: ['proto3d/main.ts'],
+  outfile: 'dist/proto3d/main.js',
+  plugins: [
+    {
+      name: 'proto-html',
+      setup: (b) =>
+        b.onEnd((r) => {
+          if (r.errors.length) return;
+          const js = readFileSync('dist/proto3d/main.js', 'utf8').replace(/<\/script/g, '<\\/script');
+          const html = readFileSync('proto3d/index.html', 'utf8').replace('<script>/*BUNDLE*/</script>', () => `<script>${js}</script>`);
+          mkdirSync('dist/site', { recursive: true });
+          writeFileSync('dist/site/proto3d.html', html);
+        }),
+    },
+  ],
+};
+
 if (watch) {
   const [w, x] = await Promise.all([esbuild.context(webOpts), esbuild.context(wxOpts)]);
   await Promise.all([w.watch(), x.watch()]);
   const site = await esbuild.context(siteOpts);
   await site.watch();
+  const proto = await esbuild.context(protoOpts);
+  await proto.watch();
   console.log('watching… 打开 dist/web/index.html 预览');
 } else {
   await Promise.all([esbuild.build(webOpts), esbuild.build(wxOpts)]);
   await esbuild.build(siteOpts);
+  await esbuild.build(protoOpts);
   // 微信小游戏包里不能出现浏览器专属全局对象
   const wx = readFileSync('dist/wechat/game.js', 'utf8');
   const banned = ['document.', 'window.', 'localStorage', 'navigator.', 'Path2D', '.roundRect(', '.ellipse('].filter((k) => wx.includes(k));

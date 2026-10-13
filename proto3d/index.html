@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+    <title>喵喵理毛线 · 3D 样张</title>
+    <style>
+      :root { color-scheme: light; --ink: #6b4a2e; --soft: #a07a55; --panel: #fffdf8; --stitch: #f0b898; }
+      html, body { margin: 0; height: 100%; overflow: hidden; }
+      body {
+        background: linear-gradient(180deg, #ffe4e6 0%, #fff4e8 55%, #fff1de 100%);
+        font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+        color: var(--ink);
+        touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+      }
+      #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+      .bar {
+        position: fixed; left: 0; right: 0; top: 0;
+        padding: calc(12px + env(safe-area-inset-top, 0px)) 14px 0;
+        display: flex; align-items: center; gap: 10px; pointer-events: none;
+      }
+      .chip {
+        pointer-events: auto; background: var(--panel); border-radius: 16px; padding: 6px 12px;
+        box-shadow: 0 3px 0 rgba(200,120,90,.18); outline: 1.5px dashed var(--stitch); outline-offset: -5px;
+        font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 6px;
+      }
+      .chip small { color: var(--soft); font-weight: 600; font-size: 12px; }
+      .title { margin-right: auto; }
+      button.chip { border: 0; color: var(--ink); font: inherit; font-weight: 700; cursor: pointer; }
+      button.chip:active { transform: translateY(2px) scale(.96); }
+      #tip {
+        position: fixed; left: 50%; bottom: calc(26px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+        background: var(--panel); padding: 10px 16px; border-radius: 18px; font-size: 14px; font-weight: 600;
+        box-shadow: 0 4px 0 rgba(200,120,90,.16); white-space: nowrap; max-width: calc(100% - 32px); overflow: hidden; text-overflow: ellipsis;
+      }
+      #tip.pop { animation: pop .35s ease; }
+      @keyframes pop { 0% { transform: translateX(-50%) scale(.9); } 60% { transform: translateX(-50%) scale(1.05); } 100% { transform: translateX(-50%) scale(1); } }
+      #win {
+        position: fixed; inset: 0; display: none; place-items: center; background: rgba(80,50,25,.35);
+      }
+      #win.show { display: grid; }
+      #win .card { background: var(--panel); border-radius: 26px; padding: 26px 30px; text-align: center; box-shadow: 0 6px 0 rgba(160,90,60,.25); }
+      #win h2 { margin: 0 0 6px; font-size: 26px; }
+      #win p { margin: 0 0 18px; color: var(--soft); }
+      #win button { border: 0; border-radius: 999px; padding: 12px 34px; font: inherit; font-size: 18px; font-weight: 800; color: #fff; background: #f39a3d; box-shadow: 0 5px 0 #c86f1c; }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+    <div class="bar">
+      <div class="chip title">3D 样张 <small>第 2 关</small></div>
+      <div class="chip"><small>步数</small><span id="moves">0</span></div>
+      <div class="chip"><small>理好</small><span id="done">0/3</span></div>
+      <button class="chip" id="restart" type="button">重来</button>
+    </div>
+    <div id="tip"></div>
+    <div id="win"><div class="card"><h2>理好啦！</h2><p>这是 3D 样张，感觉如何？</p><button id="again" type="button">再玩一次</button></div></div>
+    <script>/*BUNDLE*/</script>
+  </body>
+</html>
