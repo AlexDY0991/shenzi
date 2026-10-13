@@ -38,23 +38,27 @@ test('挪动后理顺的毛线被消除，步数减一', () => {
   assert.equal(p.stepsLeft, 4);
 });
 
-test('被压在下面的毛线挪开也挣不脱，仍然缠着', () => {
+test('被压在下面的毛线拉不出来，只能在上层底下滑动', () => {
   // 1 号在上、0 号在下（数组靠后的在上）
   const p = new Puzzle(level([[0, 0, 8], [1, 2, 6]]));
   assert.deepEqual(p.tangledPairs(), [{ top: 1, bottom: 0 }]);
-  // 把下面那根挪到最上排：几何上不再交叉，但它被勾着，不会消除
+  // 挪到最上排会从 1 号底下拉出来：不允许，也不扣步数
+  assert.equal(p.canMove(0, 'b', 1), false);
+  assert.equal(p.pulledOutFrom(0, 'b', 1), 1);
   assert.deepEqual(p.move(0, 'b', 1), []);
+  assert.equal(p.stepsLeft, 5);
+  // 仍从 1 号底下穿过的位置可以挪，依然被压着
+  assert.equal(p.canMove(0, 'b', 7), true);
+  p.move(0, 'b', 7);
   assert.deepEqual(p.tangledPairs(), [{ top: 1, bottom: 0 }]);
-  // 把上面那根拎走，两根才一起解开
-  assert.deepEqual(p.move(1, 'a', 5).sort(), [0, 1]);
+  // 把上面那根拎到最上排，两根才一起解开
+  assert.deepEqual(p.move(1, 'b', 1).sort(), [0, 1]);
   assert.equal(p.isWon, true);
 });
 
-test('压在上面的毛线挪到新位置还交叉时，依然压着；新交叉里挪动的那根在上', () => {
+test('压在上面的毛线挪到新位置还交叉时，依然压着', () => {
   const p = new Puzzle(level([[0, 0, 8], [1, 2, 6]]));
   p.move(1, 'a', 5); // (2,1)-(0,2) 仍和对角线交叉
-  assert.deepEqual(p.tangledPairs(), [{ top: 1, bottom: 0 }]);
-  p.move(0, 'a', 1); // 0 号挪动，但它在下面：仍勾着
   assert.deepEqual(p.tangledPairs(), [{ top: 1, bottom: 0 }]);
 });
 

@@ -21,7 +21,7 @@ export function solve(R: Rules, start: State, beamWidth = 200, maxDepth = 40): n
   for (let depth = 1; depth <= maxDepth; depth++) {
     const next: Node[] = [];
     for (const node of beam) {
-      for (const [k, h] of legalMoves(R, node.s.pos)) {
+      for (const [k, h] of legalMoves(R, node.s)) {
         const r = settle(R, applyMove(R, node.s, k, h));
         if (r.alive === 0) return depth;
         const kk = key(r.state);

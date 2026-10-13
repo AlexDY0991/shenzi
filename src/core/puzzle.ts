@@ -1,5 +1,5 @@
 import { BoardGeo, LevelData } from './board';
-import { applyCut, applyMove, canLift, canPlace, initialState, legalMoves, makeRules, pairBottom, pairTop, Rules, settle, sleepLeft, State, tangleCounts } from './rules';
+import { applyCut, applyMove, canLift, canMoveTo, canPlace, pulledOutFrom, initialState, legalMoves, makeRules, pairBottom, pairTop, Rules, settle, sleepLeft, State, tangleCounts } from './rules';
 
 export { BoardGeo } from './board';
 export type { LevelData } from './board';
@@ -62,7 +62,7 @@ export class Puzzle {
 
   /** 没有任何纽扣能挪动（被缝住 / 小猫在睡 / 没有空孔） */
   get isStuck(): boolean {
-    return !this.isWon && legalMoves(this.rules, this.pos).length === 0;
+    return !this.isWon && legalMoves(this.rules, this.state).length === 0;
   }
 
   get isLost(): boolean {
@@ -111,7 +111,12 @@ export class Puzzle {
 
   canMove(ropeId: number, end: RopeEnd, hole: number): boolean {
     const r = this.ropes[ropeId];
-    return !!r && r.alive && this.stepsLeft > 0 && this.canLift(ropeId, end) && this.isFreeHole(hole);
+    return !!r && r.alive && this.stepsLeft > 0 && canMoveTo(this.rules, this.state, endIndex(ropeId, end), hole);
+  }
+
+  /** 挪到 hole 会把它从哪根毛线底下拉出来（不允许）；-1 表示不会 */
+  pulledOutFrom(ropeId: number, end: RopeEnd, hole: number): number {
+    return pulledOutFrom(this.rules, this.state, endIndex(ropeId, end), hole);
   }
 
   /** 挪动一端，消耗一步；返回被理顺消除的毛线 id */

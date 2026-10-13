@@ -100,7 +100,7 @@ const MECHANICS = [
   {
     key: 'layers' as const,
     title: '毛线有上下层',
-    lines: ['被压在下面的毛线，挪开纽扣也会被勾住；', '先挪压在上面的那根，', '下面的才能解开。'],
+    lines: ['被压在下面的毛线拉不出来，', '只能在上面那根底下挪动。', '先挪压在上面的，下面的才能解开。'],
   },
   {
     key: 'fixed' as const,
@@ -139,6 +139,8 @@ export class GameScene extends Scene {
   private drag: Drag | null = null;
   private selected: { rope: number; end: RopeEnd } | null = null;
   private target = -1;
+  /** 拖到了"会被拉出来"的孔上：显示禁止标记 */
+  private blocked = -1;
   private preview = new Set<number>();
   private clearing: Clearing[] = [];
   private basketBalls: string[] = [];
@@ -367,7 +369,11 @@ export class GameScene extends Scene {
     if (this.selected) {
       const g = this.toGrid(x, y);
       const h = this.nearestFreeHole(g.x, g.y);
-      if (h >= 0) this.commitMove(this.selected.rope, this.selected.end, h);
+      if (h >= 0 && this.puzzle.canMove(this.selected.rope, this.selected.end, h)) this.commitMove(this.selected.rope, this.selected.end, h);
+      else if (h >= 0) {
+        this.app.platform.haptic('warning');
+        this.say('被上面的毛线压着，拉不出来喵～先挪上面那根', 2.6);
+      }
       this.selected = null;
     }
   }
@@ -384,7 +390,11 @@ export class GameScene extends Scene {
     d.gy = g.y;
     if (!d.moved) return;
     this.sims.get(d.rope)!.holdRest = true;
-    const h = this.nearestFreeHole(g.x, g.y);
+    const near = this.nearestFreeHole(g.x, g.y);
+    // 会把它从压住它的毛线底下拉出来的孔：放不进去
+    const ok = near >= 0 && this.puzzle.canMove(d.rope, d.end, near);
+    const h = ok ? near : -1;
+    this.blocked = !ok && near >= 0 ? near : -1;
     if (h !== this.target) {
       this.target = h;
       this.preview = new Set(h >= 0 ? this.puzzle.previewCleared(d.rope, d.end, h) : []);
@@ -407,12 +417,21 @@ export class GameScene extends Scene {
       this.selected = same ? null : { rope: d.rope, end: d.end };
     } else if (this.target >= 0) {
       this.commitMove(d.rope, d.end, this.target);
+    } else if (this.blocked >= 0) {
+      // 想把被压住的毛线拉出来：拉不动，弹回原位，不扣步数
+      const top = this.puzzle.pulledOutFrom(d.rope, d.end, this.blocked);
+      this.app.platform.haptic('warning');
+      this.app.platform.sfx.play('drop');
+      this.sims.get(d.rope)!.pluck(0.1);
+      if (top >= 0) this.sims.get(top)!.pluck(0.06);
+      this.say('被上面的毛线压着，拉不出来喵～先挪上面那根', 2.6);
     } else {
       // 没放进孔：弹回原位，毛线抖一下
       this.app.platform.sfx.play('drop');
       this.sims.get(d.rope)!.pluck(0.06);
     }
     this.target = -1;
+    this.blocked = -1;
     this.preview.clear();
   }
 
@@ -427,14 +446,9 @@ export class GameScene extends Scene {
     this.sims.get(rope)!.pluck(0.09);
     this.app.platform.sfx.play('drop');
     if (!cleared.length) this.app.platform.haptic('medium');
-    const caught = this.puzzle
-      .tangledPairs()
-      .some((p) => p.bottom === rope && !this.puzzle.geo.crossing(this.puzzle.ropes[p.top].a, this.puzzle.ropes[p.top].b, this.puzzle.ropes[rope].a, this.puzzle.ropes[rope].b));
     if (cleared.length) {
       this.startClearing(cleared);
       this.afterChange();
-    } else if (caught) {
-      this.say('它被上面的毛线压着，先挪上面那根喵～', 2.6);
     } else if (this.puzzle.stepsLeft <= 2 && this.puzzle.stepsLeft > 0) this.say('步数不多了喵！');
   }
 
@@ -606,8 +620,8 @@ export class GameScene extends Scene {
       this.sims.get(r.id)!.setEnds(e.ax, e.ay, e.bx, e.by);
     }
     // 环扣来自规则里"谁压着谁"：
-    // - 显示位置仍交叉：在交点勾着
-    // - 不再交叉但下层被勾住（caught）：下层弯过去挂在上层上，用上次的勾点
+    // - 显示位置交叉：在交点勾着
+    // - 被压住的那根正被拖着、拖到了会被拉出来的位置：它被拽住，绕过上层的勾点（V 形）
     // - 拖着上层离开交叉：视觉上提前松开（松手后规则同样会松开）
     const links: Link[] = [];
     const keys = new Set<string>();
@@ -616,40 +630,32 @@ export class GameScene extends Scene {
       const e = this.disp.get(id)!;
       return [{ x: e.ax, y: e.ay }, { x: e.bx, y: e.by }] as const;
     };
+    const via = new Map<number, { t: number; p: Vec }[]>();
     for (const { top, bottom } of this.puzzle.tangledPairs()) {
       const [pa, pb] = seg(top);
       const [qa, qb] = seg(bottom);
       const code = top * 32 + bottom;
       const h = segmentIntersection(pa, pb, qa, qb);
-      let tTop: number;
-      let tBottom: number;
-      let caught = false;
-      if (h) {
-        tTop = paramOn(pa, pb, h);
-        tBottom = paramOn(qa, qb, h);
-        this.hooks.set(code, [tTop, tBottom]);
-      } else if (top === dragging) {
-        continue;
-      } else {
-        caught = true;
-        const saved = this.hooks.get(code) ?? closestParams(pa, pb, qa, qb);
-        this.hooks.set(code, saved);
-        [tTop, tBottom] = saved;
-      }
       const st = this.sims.get(top)!;
       const sb = this.sims.get(bottom)!;
-      links.push({ a: top, b: bottom, ia: st.indexAt(tTop), ib: sb.indexAt(tBottom), h: h ?? st.pts[st.indexAt(tTop)], caught });
-      keys.add(`${top}-${bottom}`);
+      if (h) {
+        const tTop = paramOn(pa, pb, h);
+        const tBottom = paramOn(qa, qb, h);
+        this.hooks.set(code, [tTop, tBottom]);
+        links.push({ a: top, b: bottom, ia: st.indexAt(tTop), ib: sb.indexAt(tBottom), h, caught: false });
+        keys.add(`${top}-${bottom}`);
+      } else if (bottom === dragging) {
+        const [tTop, tBottom] = this.hooks.get(code) ?? closestParams(pa, pb, qa, qb);
+        const p = { x: pa.x + (pb.x - pa.x) * tTop, y: pa.y + (pb.y - pa.y) * tTop };
+        if (!via.has(bottom)) via.set(bottom, []);
+        via.get(bottom)!.push({ t: tBottom, p });
+        links.push({ a: top, b: bottom, ia: st.indexAt(tTop), ib: sb.indexAt(tBottom), h: p, caught: true });
+        keys.add(`${top}-${bottom}`);
+      }
     }
-    // 被勾住的毛线要绕到勾点再回来，自然长度按折线算
-    for (const r of alive) this.sims.get(r.id)!.targetLen = undefined;
-    for (const l of links) {
-      if (!l.caught) continue;
-      const [qa, qb] = seg(l.b);
-      const p = this.sims.get(l.a)!.pts[l.ia];
-      const len = Math.hypot(p.x - qa.x, p.y - qa.y) + Math.hypot(qb.x - p.x, qb.y - p.y);
-      const sb = this.sims.get(l.b)!;
-      sb.targetLen = Math.max(sb.targetLen ?? 0, len);
+    for (const r of alive) {
+      const v = via.get(r.id);
+      this.sims.get(r.id)!.via = v ? v.sort((x, y) => x.t - y.t).map((x) => x.p) : [];
     }
     // 环扣松脱：轻轻"嘣"一声，被松开的毛线自己弹回去
     for (const k of this.linkKeys) {
@@ -667,8 +673,9 @@ export class GameScene extends Scene {
     for (let n = 0; n < steps; n++) {
       for (const r of alive) this.sims.get(r.id)!.step(1 / 60);
       for (const l of links) {
-        // 被勾住时下层被拽向上层；普通交叉时被拖的那根更"有力"，会扯着另一根走
-        const w = l.caught ? 0.12 : l.a === dragging ? 0.15 : l.b === dragging ? 0.85 : 0.5;
+        // 被拽住的那根靠途经点绕过去，不再额外拉扯；普通交叉时被拖的那根更"有力"，会扯着另一根走
+        if (l.caught) continue;
+        const w = l.a === dragging ? 0.15 : l.b === dragging ? 0.85 : 0.5;
         l.h = applyLink(this.sims.get(l.a)!, l.ia, this.sims.get(l.b)!, l.ib, w);
       }
     }
@@ -933,6 +940,20 @@ export class GameScene extends Scene {
       if (!this.puzzle.isFreeHole(h)) continue;
       const g = geo.pos(h);
       const p = toScreen(this.layout, g.x, g.y);
+      if (h === this.blocked) {
+        // 会把毛线从上层底下拉出来：红圈 + 斜杠
+        fillCircle(ctx, p.x, p.y, r * 1.6, 'rgba(232,96,90,0.25)');
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r * 1.6, 0, Math.PI * 2);
+        ctx.moveTo(p.x - r * 1.1, p.y - r * 1.1);
+        ctx.lineTo(p.x + r * 1.1, p.y + r * 1.1);
+        ctx.strokeStyle = '#E8605A';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        continue;
+      }
+      // 只给能放进去的孔画提示圈
+      if (!this.puzzle.canMove(active.rope, active.end, h)) continue;
       if (h === this.target) {
         fillCircle(ctx, p.x, p.y, r * 1.6, shade(color, 0.35, 0.5));
         ctx.beginPath();
