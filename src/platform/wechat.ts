@@ -1,5 +1,5 @@
 import { createSynth, AudioCtxLike } from './synth';
-import { Platform, ScreenInfo, Surface, TouchHandlers } from './types';
+import { Haptic, Platform, ScreenInfo, Surface, TouchHandlers } from './types';
 
 // 微信小游戏全局对象
 declare const wx: any;
@@ -93,12 +93,24 @@ export function createWechatPlatform(): Platform {
         // 存储失败忽略
       }
     },
-    vibrate(strong) {
-      try {
-        wx.vibrateShort({ type: strong ? 'medium' : 'light' });
-      } catch {
-        // 不支持震动
-      }
+    haptic(kind: Haptic) {
+      // wx.vibrateShort 在 iOS 和安卓上都可用；成功 / 警告用两三下短震组成节奏
+      const seq: Record<Haptic, string[]> = {
+        light: ['light'],
+        medium: ['medium'],
+        heavy: ['heavy'],
+        success: ['medium', 'heavy'],
+        warning: ['heavy', 'heavy', 'heavy'],
+      };
+      seq[kind].forEach((type, i) =>
+        setTimeout(() => {
+          try {
+            wx.vibrateShort({ type });
+          } catch {
+            // 不支持震动
+          }
+        }, i * 90),
+      );
     },
     sfx: createSynth(() => audio),
     showRewardedAd() {

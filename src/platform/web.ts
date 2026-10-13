@@ -1,5 +1,5 @@
 import { createSynth, AudioCtxLike } from './synth';
-import { Platform, ScreenInfo, Surface, TouchHandlers } from './types';
+import { Haptic, Platform, ScreenInfo, Surface, TouchHandlers } from './types';
 
 /** 浏览器实现（也用于 iOS WebView 打包） */
 export function createWebPlatform(canvas: HTMLCanvasElement): Platform {
@@ -35,6 +35,42 @@ export function createWebPlatform(canvas: HTMLCanvasElement): Platform {
     fit();
     resizeCbs.forEach((cb) => cb());
   });
+
+  // 触感：安卓用 navigator.vibrate；iOS Safari 不支持震动接口，
+  // 改用 iOS 18 起的系统开关控件：在触摸事件里切换一个隐藏的 <input switch>，系统会给一下轻触反馈
+  const canVibrate = typeof navigator.vibrate === 'function';
+  const PATTERNS: Record<Haptic, number | number[]> = {
+    light: 8,
+    medium: 18,
+    heavy: 32,
+    success: [14, 70, 28],
+    warning: [28, 60, 28],
+  };
+  const TAPS: Record<Haptic, number> = { light: 1, medium: 1, heavy: 2, success: 2, warning: 3 };
+  function iosTap() {
+    const label = document.createElement('label');
+    label.setAttribute('aria-hidden', 'true');
+    label.style.display = 'none';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.setAttribute('switch', '');
+    label.appendChild(input);
+    document.head.appendChild(label);
+    label.click();
+    document.head.removeChild(label);
+  }
+  function haptic(kind: Haptic) {
+    try {
+      if (canVibrate) {
+        navigator.vibrate(PATTERNS[kind]);
+        return;
+      }
+      iosTap();
+      for (let i = 1; i < TAPS[kind]; i++) setTimeout(iosTap, i * 90);
+    } catch {
+      // 不支持触感
+    }
+  }
 
   function ensureAudio() {
     if (audio) return;
@@ -94,13 +130,7 @@ export function createWebPlatform(canvas: HTMLCanvasElement): Platform {
         // 隐私模式等情况下忽略
       }
     },
-    vibrate(strong) {
-      try {
-        navigator.vibrate?.(strong ? 30 : 12);
-      } catch {
-        // 不支持震动
-      }
-    },
+    haptic,
     sfx: createSynth(() => audio),
     showRewardedAd: () => new Promise((resolve) => setTimeout(() => resolve(true), 900)),
   };
