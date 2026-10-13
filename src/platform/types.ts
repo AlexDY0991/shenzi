@@ -30,6 +30,9 @@ export interface Sfx {
   enabled: boolean;
 }
 
+/** 触感反馈档位 */
+export type Haptic = 'light' | 'medium' | 'heavy' | 'success' | 'warning';
+
 export interface Platform {
   readonly name: 'web' | 'wechat';
   readonly screen: Surface;
@@ -41,7 +44,8 @@ export interface Platform {
   createOffscreen(width: number, height: number): Surface;
   storageGet(key: string): string | null;
   storageSet(key: string, value: string): void;
-  vibrate(strong?: boolean): void;
+  /** 触感反馈。浏览器里需要在触摸事件中同步调用才会生效（iOS 尤其如此） */
+  haptic(kind: Haptic): void;
   sfx: Sfx;
   /** 激励视频广告；网页版用模拟，微信版接 wx.createRewardedVideoAd */
   showRewardedAd(): Promise<boolean>;

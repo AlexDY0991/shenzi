@@ -306,7 +306,7 @@ export class GameScene extends Scene {
     const pin = this.pickPin(x, y);
     if (pin && !this.puzzle.canLift(pin.rope, pin.end)) {
       // 拿不起来：缝住或小猫在睡觉
-      this.app.platform.vibrate(true);
+      this.app.platform.haptic('warning');
       this.app.platform.sfx.play('tap');
       const nap = this.puzzle.sleepLeft(pin.rope);
       if (nap > 0) {
@@ -322,7 +322,7 @@ export class GameScene extends Scene {
       const g = this.toGrid(x, y);
       this.drag = { ...pin, gx: g.x, gy: g.y, startX: x, startY: y, moved: false };
       this.app.platform.sfx.play('pick');
-      this.app.platform.vibrate();
+      this.app.platform.haptic('light');
       this.interacted = true;
       return;
     }
@@ -353,7 +353,7 @@ export class GameScene extends Scene {
       this.preview = new Set(h >= 0 ? this.puzzle.previewCleared(d.rope, d.end, h) : []);
       if (h >= 0) {
         // 靠近空孔时"咔"一下吸过去
-        this.app.platform.vibrate();
+        this.app.platform.haptic('light');
         this.app.platform.sfx.play('tap');
       }
     }
@@ -389,7 +389,7 @@ export class GameScene extends Scene {
     this.ripples.push({ ...toScreen(this.layout, hp.x, hp.y), t: 0, color: yarnColor(this.puzzle.ropes[rope].color) });
     this.sims.get(rope)!.pluck(0.09);
     this.app.platform.sfx.play('drop');
-    this.app.platform.vibrate();
+    if (!cleared.length) this.app.platform.haptic('medium');
     if (cleared.length) {
       this.startClearing(cleared);
       this.afterChange();
@@ -402,7 +402,7 @@ export class GameScene extends Scene {
       this.clearing.push({ color: yarnColor(r.color), pts: this.sims.get(id)!.smooth(), t: -i * 0.12, slot: this.basketBalls.length + i });
     });
     this.app.platform.sfx.play('clear');
-    this.app.platform.vibrate(true);
+    this.app.platform.haptic('heavy');
     this.catReact('happy', 1.2);
     this.face.happy = 1.2;
     if (!this.puzzle.isWon) this.say(TIPS_CLEAR[Math.floor(this.time * 7) % TIPS_CLEAR.length], 1.6);
@@ -599,7 +599,7 @@ export class GameScene extends Scene {
       if (this.puzzle.ropes[a].alive && this.puzzle.ropes[b].alive) {
         this.sims.get(a)!.pluck(0.04);
         this.sims.get(b)!.pluck(-0.04);
-        if (this.drag) this.app.platform.vibrate();
+        if (this.drag) this.app.platform.haptic('light');
       }
     }
     this.linkKeys = keys;
@@ -627,6 +627,7 @@ export class GameScene extends Scene {
     save.unlocked = Math.max(save.unlocked, Math.min(this.levelIndex + 1, LEVELS.length - 1));
     this.app.persist();
     this.app.platform.sfx.play('win');
+    this.app.platform.haptic('success');
     this.catReact('happy', 999);
     this.say('全部理好啦！', 3);
     const { width: W } = this.app.info;
@@ -651,6 +652,7 @@ export class GameScene extends Scene {
     this.state = 'lost';
     this.stateTime = 0;
     this.app.platform.sfx.play('lose');
+    this.app.platform.haptic('warning');
     this.catReact('sad', 999);
     this.scissorsMode = false;
     this.selected = null;
@@ -832,7 +834,7 @@ export class GameScene extends Scene {
     m.lines.forEach((ln, i) => text(ctx, ln, W / 2, y + 172 + i * 22, 15, THEME.textLight, { weight: 'normal' }));
     const by = y + ph - 70;
     const p = this.button('intro-ok', x + 40, by, pw - 80, 50, () => (this.intro = null));
-    pillButton(ctx, x + 40, by, pw - 80, 50, '知道了', '#79C267', p);
+    this.withPress(ctx, 'intro-ok', x + 40 + (pw - 80) / 2, by + 50 / 2, () => pillButton(ctx, x + 40, by, pw - 80, 50, '知道了', '#79C267', p));
   }
 
   /** 卡死时用剪刀救场 */
@@ -1057,12 +1059,16 @@ export class GameScene extends Scene {
     const r = 22;
     const rx = W - 14 - r;
     const pr = this.button('restart', rx - r, y + 4, r * 2, r * 2, () => this.restart());
-    roundButton(ctx, rx, y + 4 + r, r, pr);
-    iconRestart(ctx, rx, y + 4 + r + (pr ? 2 : 0), r * 0.85);
+    this.withPress(ctx, 'restart', rx, y + 4 + r, () => {
+      roundButton(ctx, rx, y + 4 + r, r, pr);
+      iconRestart(ctx, rx, y + 4 + r + (pr ? 2 : 0), r * 0.85);
+    });
     const hx = rx - r * 2 - 10;
     const ph = this.button('home', hx - r, y + 4, r * 2, r * 2, () => this.app.go(new TitleScene(this.app)));
-    roundButton(ctx, hx, y + 4 + r, r, ph);
-    iconHome(ctx, hx, y + 4 + r + (ph ? 2 : 0), r * 0.8);
+    this.withPress(ctx, 'home', hx, y + 4 + r, () => {
+      roundButton(ctx, hx, y + 4 + r, r, ph);
+      iconHome(ctx, hx, y + 4 + r + (ph ? 2 : 0), r * 0.8);
+    });
   }
 
   private drawProps(ctx: Ctx2D): void {
@@ -1072,16 +1078,20 @@ export class GameScene extends Scene {
     const save = this.app.save;
     const sx = W / 2 - 50;
     const ps = this.button('scissors', sx - r, y - r, r * 2, r * 2, () => this.toggleScissors());
-    roundButton(ctx, sx, y, r, ps, this.scissorsMode);
-    iconScissors(ctx, sx, y + (ps ? 2 : 0), r * 1.1);
-    badge(ctx, sx + r * 0.75, y - r * 0.7, save.scissors > 0 ? String(save.scissors) : '▶', save.scissors > 0 ? THEME.danger : '#79C267');
+    this.withPress(ctx, 'scissors', sx, y, () => {
+      roundButton(ctx, sx, y, r, ps, this.scissorsMode);
+      iconScissors(ctx, sx, y + (ps ? 2 : 0), r * 1.1);
+      badge(ctx, sx + r * 0.75, y - r * 0.7, save.scissors > 0 ? String(save.scissors) : '▶', save.scissors > 0 ? THEME.danger : '#79C267');
+    });
     text(ctx, '剪刀', sx, y + r + 12, 12, THEME.textLight);
 
     const tx = W / 2 + 50;
     const pt = this.button('steps', tx - r, y - r, r * 2, r * 2, () => this.useSteps());
-    roundButton(ctx, tx, y, r, pt);
-    iconSteps(ctx, tx, y + (pt ? 2 : 0), r * 1.1);
-    badge(ctx, tx + r * 0.75, y - r * 0.7, save.steps > 0 ? String(save.steps) : '▶', save.steps > 0 ? THEME.danger : '#79C267');
+    this.withPress(ctx, 'steps', tx, y, () => {
+      roundButton(ctx, tx, y, r, pt);
+      iconSteps(ctx, tx, y + (pt ? 2 : 0), r * 1.1);
+      badge(ctx, tx + r * 0.75, y - r * 0.7, save.steps > 0 ? String(save.steps) : '▶', save.steps > 0 ? THEME.danger : '#79C267');
+    });
     text(ctx, '加步数', tx, y + r + 12, 12, THEME.textLight);
   }
 
@@ -1140,10 +1150,10 @@ export class GameScene extends Scene {
     const bw = pw - 64;
     if (last) {
       const p = this.button('home2', x + 32, y + 182, bw, 52, () => this.app.go(new TitleScene(this.app)));
-      pillButton(ctx, x + 32, y + 182, bw, 52, '回到首页', THEME.accent, p);
+      this.withPress(ctx, 'home2', x + 32 + (bw) / 2, y + 182 + 52 / 2, () => pillButton(ctx, x + 32, y + 182, bw, 52, '回到首页', THEME.accent, p));
     } else {
       const p = this.button('next', x + 32, y + 182, bw, 52, () => this.app.go(new GameScene(this.app, this.levelIndex + 1)));
-      pillButton(ctx, x + 32, y + 182, bw, 52, '下一关', THEME.accent, p);
+      this.withPress(ctx, 'next', x + 32 + (bw) / 2, y + 182 + 52 / 2, () => pillButton(ctx, x + 32, y + 182, bw, 52, '下一关', THEME.accent, p));
     }
     const pr = this.button('replay', W / 2 - 60, y + 244, 120, 34, () => this.restart());
     text(ctx, '再玩一次', W / 2, y + 261 + (pr ? 2 : 0), 15, THEME.textLight);
@@ -1183,9 +1193,9 @@ export class GameScene extends Scene {
         ? `用道具 +${STEP_PROP} 步（剩 ${this.app.save.steps}）`
         : `看广告 +${STEP_PROP} 步`;
     const p1 = this.button('more', x + 32, y + 160, bw, 52, () => (stuck ? this.rescueWithScissors() : this.useSteps()));
-    pillButton(ctx, x + 32, y + 160, bw, 52, label, '#79C267', p1);
+    this.withPress(ctx, 'more', x + 32 + (bw) / 2, y + 160 + 52 / 2, () => pillButton(ctx, x + 32, y + 160, bw, 52, label, '#79C267', p1));
     const p2 = this.button('retry', x + 32, y + 226, bw, 48, () => this.restart());
-    pillButton(ctx, x + 32, y + 226, bw, 48, '重新开始', THEME.accent, p2);
+    this.withPress(ctx, 'retry', x + 32 + (bw) / 2, y + 226 + 48 / 2, () => pillButton(ctx, x + 32, y + 226, bw, 48, '重新开始', THEME.accent, p2));
   }
 }
 

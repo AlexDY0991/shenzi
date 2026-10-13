@@ -87,9 +87,9 @@ export class TitleScene extends Scene {
     const by = H * 0.7;
     const next = Math.min(this.app.save.unlocked, LEVELS.length - 1);
     const p1 = this.button('play', W / 2 - bw / 2, by, bw, 58, () => this.start(next));
-    pillButton(ctx, W / 2 - bw / 2, by, bw, 58, next === 0 ? '开始游戏' : `继续 · 第 ${next + 1} 关`, THEME.accent, p1);
+    this.withPress(ctx, 'play', W / 2 - bw / 2 + (bw) / 2, by + 58 / 2, () => pillButton(ctx, W / 2 - bw / 2, by, bw, 58, next === 0 ? '开始游戏' : `继续 · 第 ${next + 1} 关`, THEME.accent, p1));
     const p2 = this.button('levels', W / 2 - bw / 2, by + 74, bw, 50, () => (this.showLevels = true));
-    pillButton(ctx, W / 2 - bw / 2, by + 74, bw, 50, '选择关卡', '#79C267', p2);
+    this.withPress(ctx, 'levels', W / 2 - bw / 2 + (bw) / 2, by + 74 + 50 / 2, () => pillButton(ctx, W / 2 - bw / 2, by + 74, bw, 50, '选择关卡', '#79C267', p2));
     const sound = this.app.save.sound;
     const p3 = this.button('sound', W / 2 - 60, by + 136, 120, 36, () => {
       this.app.save.sound = !sound;
