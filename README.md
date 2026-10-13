@@ -82,7 +82,7 @@ wechat/        微信小游戏配置模板
 
 ## 发布展示页（GitHub Pages）
 
-`.github/workflows/pages.yml` 在推送到 `main` 时自动构建并发布 `dist/site/`。首次使用需要在仓库 **Settings → Pages → Build and deployment → Source** 里选 **GitHub Actions**。发布后地址为 `https://<用户名>.github.io/<仓库名>/`。
+`.github/workflows/pages.yml` 在推送到 `main` 时自动构建并发布 `dist/site/`。构建会同时输出 `version.json`，试玩页启动时不走缓存读取它，发现自己是旧版本就自动刷新到新版本（避免浏览器或微信内置浏览器拿缓存里的旧版）。首次使用需要在仓库 **Settings → Pages → Build and deployment → Source** 里选 **GitHub Actions**。发布后地址为 `https://<用户名>.github.io/<仓库名>/`。
 
 ## 上微信前还要做的
 
