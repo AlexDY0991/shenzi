@@ -1,13 +1,14 @@
-import { ropeCurve, Vec } from '../core/geometry';
+import { segmentIntersection, Vec } from '../core/geometry';
 import { Puzzle, RopeEnd } from '../core/puzzle';
 import { Ctx2D, Surface } from '../platform/types';
-import { BoardLayout, drawBoard, toScreen } from '../render/board';
+import { BoardLayout, drawBoard, drawFabricFaces, HOLE_R, levelBounds, toScreen } from '../render/board';
 import { basketBallPos, CatState, drawBasket, drawCat, newCatState } from '../render/cat';
 import { shade, THEME, yarnColor } from '../render/colors';
 import { ellipsePath, fillCircle, heart, pawPrint, roundRectPath, star, text } from '../render/shapes';
 import { drawKitten, drawLock } from '../render/mechanics';
-import { badge, catEarPanel, iconHome, iconRestart, iconScissors, iconSteps, panel, pillButton, roundButton, speechBubble } from '../render/ui';
-import { drawButton, drawYarn, drawYarnBall } from '../render/yarn';
+import { badge, catEarPanel, iconHome, iconRestart, iconScissors, iconSteps, levelProgress, panel, pillButton, roundButton, speechBubble } from '../render/ui';
+import { drawButton, drawYarn, drawYarnBall, drawYarnWrap, setSpriteFactory } from '../render/yarn';
+import { applyLink, RopeSim } from './rope-sim';
 import type { App } from './app';
 import { LEVELS } from './levels';
 import { Scene } from './scene';
@@ -33,7 +34,8 @@ interface Drag {
 
 interface Clearing {
   color: string;
-  ends: Ends;
+  /** 消除瞬间毛线的形状（棋盘单位） */
+  pts: Vec[];
   t: number;
   slot: number;
 }
@@ -49,6 +51,15 @@ interface Particle {
   color: string;
   size: number;
   rot: number;
+}
+
+interface Link {
+  a: number;
+  b: number;
+  ia: number;
+  ib: number;
+  /** 环扣位置（棋盘单位） */
+  h: Vec;
 }
 
 const WIND_TIME = 0.32;
@@ -116,6 +127,13 @@ export class GameScene extends Scene {
   private pops: PopAnim[] = [];
   private prevSleep = new Map<number, number>();
   private prevLocks: [number, number][] = [];
+  private sims = new Map<number, RopeSim>();
+  private links: Link[] = [];
+  private linkKeys = new Set<string>();
+  /** 纽扣落孔的压扁动画：key = 毛线*2+端 */
+  private pinFx = new Map<number, number>();
+  private ripples: { x: number; y: number; t: number; color: string }[] = [];
+  private face = { blink: 0, happy: 0, timer: 2 };
 
   // 布局
   private topY = 0;
@@ -130,7 +148,11 @@ export class GameScene extends Scene {
   constructor(app: App, private levelIndex: number) {
     super(app);
     this.puzzle = new Puzzle(LEVELS[levelIndex]);
-    for (const r of this.puzzle.ropes) this.disp.set(r.id, this.holeEnds(r.a, r.b));
+    for (const r of this.puzzle.ropes) {
+      const e = this.holeEnds(r.a, r.b);
+      this.disp.set(r.id, e);
+      this.sims.set(r.id, new RopeSim(e.ax, e.ay, e.bx, e.by));
+    }
     this.onResize();
     this.say(levelIndex === 0 ? '拖动纽扣，把毛线解开喵～' : TIPS_START[levelIndex % TIPS_START.length], 3.5);
     this.intro = MECHANICS.find((m) => LEVELS.findIndex((lv) => (lv[m.key]?.length ?? 0) > 0) === levelIndex) ?? null;
@@ -144,8 +166,8 @@ export class GameScene extends Scene {
   }
 
   private ropeMid(id: number): Vec {
-    const pts = this.screenCurve(this.disp.get(id)!);
-    return pts[Math.floor(pts.length / 2)];
+    const m = this.sims.get(id)!.mid;
+    return toScreen(this.layout, m.x, m.y);
   }
 
   /** 状态变化后：锁打开、小猫醒来 */
@@ -175,7 +197,7 @@ export class GameScene extends Scene {
     const { width: W, height: H, safeTop, safeBottom } = this.app.info;
     const lv = this.puzzle.level;
     this.topY = safeTop + 10;
-    const catTop = this.topY + 60;
+    const catTop = this.topY + 66;
     const catH = Math.max(78, Math.min(118, H * 0.13));
     this.catS = catH / 3.3;
     this.catX = W - 26 - this.catS * 1.6;
@@ -184,15 +206,17 @@ export class GameScene extends Scene {
     this.basketX = this.catX - this.catS * 1.25 - this.basketW * 0.55;
     this.basketY = this.catY - this.basketW * 0.5;
     this.bottomY = H - safeBottom - 54;
-    const boardTop = this.catY + 26;
-    const boardBottom = this.bottomY - 52;
-    const cell = Math.min((W - 44) / lv.cols, (boardBottom - boardTop) / lv.rows, 78);
+    const boardTop = this.catY + 14;
+    const boardBottom = this.bottomY - 44;
+    const b = levelBounds(lv);
+    const cell = Math.min((W - 24) / (b.x1 - b.x0), (boardBottom - boardTop) / (b.y1 - b.y0), 86);
     this.layout = {
       cell,
-      x0: W / 2 - ((lv.cols - 1) / 2) * cell,
-      y0: (boardTop + boardBottom) / 2 - ((lv.rows - 1) / 2) * cell,
+      x0: W / 2 - ((b.x0 + b.x1) / 2) * cell,
+      y0: (boardTop + boardBottom) / 2 - ((b.y0 + b.y1) / 2) * cell,
     };
     this.boardCache = null;
+    setSpriteFactory((w, h) => this.app.platform.createOffscreen(w, h), this.app.info.dpr);
   }
 
   private holeEnds(a: number, b: number): Ends {
@@ -205,8 +229,12 @@ export class GameScene extends Scene {
     return { x: (x - this.layout.x0) / this.layout.cell, y: (y - this.layout.y0) / this.layout.cell };
   }
 
-  private screenCurve(e: Ends): Vec[] {
-    return ropeCurve(e.ax, e.ay, e.bx, e.by).map((p) => toScreen(this.layout, p.x, p.y));
+  /** 物理毛线的平滑折线（屏幕坐标） */
+  private ropePts(id: number): Vec[] {
+    return this.sims
+      .get(id)!
+      .smooth()
+      .map((p) => toScreen(this.layout, p.x, p.y));
   }
 
   // ───────────── 交互 ─────────────
@@ -244,7 +272,7 @@ export class GameScene extends Scene {
     const ropes = [...this.puzzle.aliveRopes].sort((p, q) => q.z - p.z);
     const reach = this.layout.cell * 0.3;
     for (const r of ropes) {
-      const pts = this.screenCurve(this.disp.get(r.id)!);
+      const pts = this.ropePts(r.id);
       for (let i = 0; i < pts.length; i++) {
         if (Math.hypot(pts[i].x - x, pts[i].y - y) < reach) return r.id;
       }
@@ -253,14 +281,20 @@ export class GameScene extends Scene {
   }
 
   private nearestFreeHole(gx: number, gy: number): number {
+    let best = -1;
+    let bd = 0.55;
     const geo = this.puzzle.geo;
-    const c = Math.round(gx);
-    const r = Math.round(gy);
-    if (c < 0 || r < 0 || c >= geo.cols || r >= geo.rows) return -1;
-    if (Math.hypot(gx - c, gy - r) > 0.5) return -1;
-    const h = r * geo.cols + c;
-    return this.puzzle.isFreeHole(h) ? h : -1;
+    for (let h = 0; h < geo.holeCount; h++) {
+      const p = geo.pos(h);
+      const d = Math.hypot(gx - p.x, gy - p.y);
+      if (d < bd && this.puzzle.isFreeHole(h)) {
+        bd = d;
+        best = h;
+      }
+    }
+    return best;
   }
+
 
   protected pointerDown(x: number, y: number): void {
     if (this.state !== 'play' || this.intro) return;
@@ -312,19 +346,16 @@ export class GameScene extends Scene {
     d.gx = g.x;
     d.gy = g.y;
     if (!d.moved) return;
-    const e = this.disp.get(d.rope)!;
-    if (d.end === 'a') {
-      e.ax = g.x;
-      e.ay = g.y;
-    } else {
-      e.bx = g.x;
-      e.by = g.y;
-    }
+    this.sims.get(d.rope)!.holdRest = true;
     const h = this.nearestFreeHole(g.x, g.y);
     if (h !== this.target) {
       this.target = h;
       this.preview = new Set(h >= 0 ? this.puzzle.previewCleared(d.rope, d.end, h) : []);
-      if (h >= 0) this.app.platform.vibrate();
+      if (h >= 0) {
+        // 靠近空孔时"咔"一下吸过去
+        this.app.platform.vibrate();
+        this.app.platform.sfx.play('tap');
+      }
     }
   }
 
@@ -332,6 +363,7 @@ export class GameScene extends Scene {
     const d = this.drag;
     if (!d) return;
     this.drag = null;
+    this.sims.get(d.rope)!.holdRest = false;
     if (!d.moved) {
       // 轻点：选中这颗纽扣，再点空孔即可移动
       const same = this.selected && this.selected.rope === d.rope && this.selected.end === d.end;
@@ -339,7 +371,9 @@ export class GameScene extends Scene {
     } else if (this.target >= 0) {
       this.commitMove(d.rope, d.end, this.target);
     } else {
+      // 没放进孔：弹回原位，毛线抖一下
       this.app.platform.sfx.play('drop');
+      this.sims.get(d.rope)!.pluck(0.06);
     }
     this.target = -1;
     this.preview.clear();
@@ -349,6 +383,11 @@ export class GameScene extends Scene {
     if (!this.puzzle.canMove(rope, end, hole)) return;
     const cleared = this.puzzle.move(rope, end, hole);
     this.stepsUsed++;
+    // 落孔反馈：纽扣压扁回弹 + 孔边涟漪 + 毛线"嘣"地抖一下
+    this.pinFx.set(rope * 2 + (end === 'a' ? 0 : 1), 0);
+    const hp = this.puzzle.geo.pos(hole);
+    this.ripples.push({ ...toScreen(this.layout, hp.x, hp.y), t: 0, color: yarnColor(this.puzzle.ropes[rope].color) });
+    this.sims.get(rope)!.pluck(0.09);
     this.app.platform.sfx.play('drop');
     this.app.platform.vibrate();
     if (cleared.length) {
@@ -360,11 +399,12 @@ export class GameScene extends Scene {
   private startClearing(ids: number[]): void {
     ids.forEach((id, i) => {
       const r = this.puzzle.ropes[id];
-      this.clearing.push({ color: yarnColor(r.color), ends: { ...this.disp.get(id)! }, t: -i * 0.12, slot: this.basketBalls.length + i });
+      this.clearing.push({ color: yarnColor(r.color), pts: this.sims.get(id)!.smooth(), t: -i * 0.12, slot: this.basketBalls.length + i });
     });
     this.app.platform.sfx.play('clear');
     this.app.platform.vibrate(true);
     this.catReact('happy', 1.2);
+    this.face.happy = 1.2;
     if (!this.puzzle.isWon) this.say(TIPS_CLEAR[Math.floor(this.time * 7) % TIPS_CLEAR.length], 1.6);
   }
 
@@ -430,21 +470,56 @@ export class GameScene extends Scene {
     this.time += dt;
     this.stateTime += dt;
 
-    // 纽扣位置平滑地跟随目标孔位（松手后回弹 / 吸附）
+    // 纽扣位置：拖着的跟手（靠近空孔时被吸过去），其余平滑回到孔位
     const k = 1 - Math.exp(-dt * 20);
+    const kd = 1 - Math.exp(-dt * 30);
     for (const r of this.puzzle.ropes) {
       const e = this.disp.get(r.id)!;
       const tgt = this.holeEnds(r.a, r.b);
-      const dragging = this.drag && this.drag.moved && this.drag.rope === r.id ? this.drag.end : null;
-      if (dragging !== 'a') {
+      const d = this.drag && this.drag.moved && this.drag.rope === r.id ? this.drag : null;
+      let fx = 0;
+      let fy = 0;
+      if (d) {
+        fx = d.gx;
+        fy = d.gy;
+        if (this.target >= 0) {
+          const hp = this.puzzle.geo.pos(this.target);
+          fx += (hp.x - fx) * 0.55;
+          fy += (hp.y - fy) * 0.55;
+        }
+      }
+      if (d?.end === 'a') {
+        e.ax += (fx - e.ax) * kd;
+        e.ay += (fy - e.ay) * kd;
+      } else {
         e.ax += (tgt.ax - e.ax) * k;
         e.ay += (tgt.ay - e.ay) * k;
       }
-      if (dragging !== 'b') {
+      if (d?.end === 'b') {
+        e.bx += (fx - e.bx) * kd;
+        e.by += (fy - e.by) * kd;
+      } else {
         e.bx += (tgt.bx - e.bx) * k;
         e.by += (tgt.by - e.by) * k;
       }
     }
+    this.stepPhysics(dt);
+    for (const [key, t] of this.pinFx) {
+      if (t + dt > 0.6) this.pinFx.delete(key);
+      else this.pinFx.set(key, t + dt);
+    }
+    for (const r of this.ripples) r.t += dt * 2.2;
+    this.ripples = this.ripples.filter((r) => r.t < 1);
+    // 布垫猫脸：眨眼 / 开心
+    this.face.timer -= dt;
+    if (this.face.timer < 0) {
+      this.face.blink = 1;
+      if (this.face.timer < -0.14) {
+        this.face.blink = 0;
+        this.face.timer = 2.5 + Math.random() * 3;
+      }
+    }
+    if (this.face.happy > 0) this.face.happy -= dt;
 
     if (this.shake) {
       this.shake.t -= dt * 2.5;
@@ -479,6 +554,67 @@ export class GameScene extends Scene {
     this.updateCat(dt);
     this.updateParticles(dt);
     if (this.bubble.t > 0) this.bubble.t -= dt;
+  }
+
+  /** 毛线物理：更新端点 -> 计算环扣 -> 积分。环扣松脱时毛线弹开并给一点反馈 */
+  private stepPhysics(dt: number): void {
+    const alive = this.puzzle.aliveRopes;
+    for (const r of alive) {
+      const e = this.disp.get(r.id)!;
+      this.sims.get(r.id)!.setEnds(e.ax, e.ay, e.bx, e.by);
+    }
+    // 环扣按当前显示位置的交叉来算，拖动中也会实时勾住 / 滑脱
+    const links: Link[] = [];
+    const keys = new Set<string>();
+    for (let i = 0; i < alive.length; i++) {
+      for (let j = i + 1; j < alive.length; j++) {
+        const A = alive[i];
+        const B = alive[j];
+        const ea = this.disp.get(A.id)!;
+        const eb = this.disp.get(B.id)!;
+        const pa = { x: ea.ax, y: ea.ay };
+        const pb = { x: ea.bx, y: ea.by };
+        const qa = { x: eb.ax, y: eb.ay };
+        const qb = { x: eb.bx, y: eb.by };
+        const h = segmentIntersection(pa, pb, qa, qb);
+        if (!h) continue;
+        const la = Math.hypot(pb.x - pa.x, pb.y - pa.y) || 1;
+        const lb = Math.hypot(qb.x - qa.x, qb.y - qa.y) || 1;
+        const ta = Math.hypot(h.x - pa.x, h.y - pa.y) / la;
+        const tb = Math.hypot(h.x - qa.x, h.y - qa.y) / lb;
+        // 交点太靠近纽扣时不画环扣（避免和纽扣挤在一起）
+        if (Math.min(ta, 1 - ta) * la < 0.35 || Math.min(tb, 1 - tb) * lb < 0.35) continue;
+        const [up, lo] = A.z > B.z ? [A, B] : [B, A];
+        const [tu, tl] = A.z > B.z ? [ta, tb] : [tb, ta];
+        const su = this.sims.get(up.id)!;
+        const sl = this.sims.get(lo.id)!;
+        links.push({ a: up.id, b: lo.id, ia: su.indexAt(tu), ib: sl.indexAt(tl), h });
+        keys.add(`${up.id}-${lo.id}`);
+      }
+    }
+    // 环扣松脱：轻轻"嘣"一声，被松开的毛线自己弹回去
+    for (const k of this.linkKeys) {
+      if (keys.has(k)) continue;
+      const [a, b] = k.split('-').map(Number);
+      if (this.puzzle.ropes[a].alive && this.puzzle.ropes[b].alive) {
+        this.sims.get(a)!.pluck(0.04);
+        this.sims.get(b)!.pluck(-0.04);
+        if (this.drag) this.app.platform.vibrate();
+      }
+    }
+    this.linkKeys = keys;
+    // 定步长积分，环扣在每个子步里施加
+    const steps = Math.max(1, Math.min(3, Math.round(dt * 60)));
+    for (let n = 0; n < steps; n++) {
+      for (const r of alive) this.sims.get(r.id)!.step(1 / 60);
+      for (const l of links) {
+        const dragging = this.drag?.moved ? this.drag.rope : -1;
+        // 被拖的那根更"有力"，会扯着另一根走
+        const w = l.a === dragging ? 0.15 : l.b === dragging ? 0.85 : 0.5;
+        l.h = applyLink(this.sims.get(l.a)!, l.ia, this.sims.get(l.b)!, l.ib, w);
+      }
+    }
+    this.links = links;
   }
 
   private win(): void {
@@ -596,8 +732,10 @@ export class GameScene extends Scene {
   draw(ctx: Ctx2D): void {
     this.app.drawBackground(ctx);
     this.drawBoardCached(ctx);
+    drawFabricFaces(ctx, this.puzzle.level, this.layout, { blink: this.face.blink, happy: this.face.happy > 0 || this.state === 'won' ? 1 : 0 });
     this.drawLocks(ctx);
     this.drawHoleHints(ctx);
+    this.drawRipples(ctx);
     this.drawRopes(ctx);
     this.drawKittens(ctx);
     this.drawClearing(ctx);
@@ -610,6 +748,38 @@ export class GameScene extends Scene {
     if (this.state === 'won' && this.stateTime > 0.9) this.drawWinPanel(ctx);
     if (this.state === 'lost' && this.stateTime > 0.5) this.drawLosePanel(ctx);
     if (this.intro) this.drawIntro(ctx, this.intro);
+    else if (this.puzzle.level.hard && this.time < 2.2) this.drawHardBanner(ctx);
+  }
+
+  /** 困难关开场横幅：从左边滑进来，停一下再滑出去 */
+  private drawHardBanner(ctx: Ctx2D): void {
+    const { width: W, height: H } = this.app.info;
+    const t = this.time;
+    const inX = Math.min(1, t / 0.35);
+    const outX = Math.max(0, (t - 1.7) / 0.4);
+    const ease = (u: number) => 1 - Math.pow(1 - u, 3);
+    const x = W / 2 + (1 - ease(inX)) * -W + ease(outX) * W;
+    const y = H * 0.42;
+    ctx.save();
+    ctx.globalAlpha = 1 - outX;
+    ctx.fillStyle = 'rgba(80,40,30,0.25)';
+    ctx.fillRect(0, y - 46, W, 92);
+    ctx.translate(x, y);
+    ctx.rotate(-0.04);
+    roundRectPath(ctx, -150, -32, 300, 64, 18);
+    ctx.fillStyle = '#C2493E';
+    ctx.fill();
+    roundRectPath(ctx, -150, -36, 300, 64, 18);
+    ctx.fillStyle = '#F07A6E';
+    ctx.fill();
+    ctx.setLineDash([5, 4]);
+    roundRectPath(ctx, -144, -30, 288, 52, 13);
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    text(ctx, '困难关卡', 0, -6, 28, '#FFFFFF', { stroke: '#B03A30', strokeW: 6 });
+    ctx.restore();
   }
 
   private drawLocks(ctx: Ctx2D): void {
@@ -622,7 +792,7 @@ export class GameScene extends Scene {
   }
 
   private drawKittens(ctx: Ctx2D): void {
-    const s = this.layout.cell * 0.36;
+    const s = this.layout.cell * 0.42;
     for (const r of this.puzzle.aliveRopes) {
       const n = this.puzzle.sleepLeft(r.id);
       if (n <= 0) continue;
@@ -677,7 +847,7 @@ export class GameScene extends Scene {
     if (!this.boardCache) {
       this.boardCache = this.app.platform.createOffscreen(Math.round(W * dpr), Math.round(H * dpr));
       this.boardCache.ctx.scale(dpr, dpr);
-      drawBoard(this.boardCache.ctx, this.puzzle.geo, this.layout);
+      drawBoard(this.boardCache.ctx, this.puzzle.level, this.layout);
     }
     ctx.drawImage(this.boardCache.canvas, 0, 0, W, H);
   }
@@ -689,27 +859,44 @@ export class GameScene extends Scene {
     const color = yarnColor(this.puzzle.ropes[active.rope].color);
     const geo = this.puzzle.geo;
     const pulse = 0.5 + 0.5 * Math.sin(this.time * 6);
+    const r = this.layout.cell * HOLE_R;
     for (let h = 0; h < geo.holeCount; h++) {
       if (!this.puzzle.isFreeHole(h)) continue;
       const g = geo.pos(h);
       const p = toScreen(this.layout, g.x, g.y);
-      const r = this.layout.cell * 0.25;
       if (h === this.target) {
-        fillCircle(ctx, p.x, p.y, r * 1.45, shade(color, 0.3, 0.55));
+        fillCircle(ctx, p.x, p.y, r * 1.6, shade(color, 0.35, 0.5));
         ctx.beginPath();
-        ctx.arc(p.x, p.y, r * 1.45, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, r * 1.6, 0, Math.PI * 2);
         ctx.strokeStyle = color;
         ctx.lineWidth = 3;
         ctx.stroke();
       } else {
-        fillCircle(ctx, p.x, p.y, r * (0.45 + pulse * 0.1), 'rgba(255,255,255,0.75)');
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r * (1.35 + pulse * 0.12), 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,255,255,${0.55 + pulse * 0.35})`;
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
       }
     }
   }
 
+  /** 纽扣落孔时孔边的一圈涟漪 */
+  private drawRipples(ctx: Ctx2D): void {
+    const r0 = this.layout.cell * HOLE_R;
+    for (const rp of this.ripples) {
+      ctx.beginPath();
+      ctx.arc(rp.x, rp.y, r0 * (1.3 + rp.t * 1.4), 0, Math.PI * 2);
+      ctx.strokeStyle = shade(rp.color, 0.2, (1 - rp.t) * 0.7);
+      ctx.lineWidth = 3 * (1 - rp.t) + 1;
+      ctx.stroke();
+    }
+  }
+
+
   private drawRopes(ctx: Ctx2D): void {
     const cell = this.layout.cell;
-    const yarnW = cell * 0.17;
+    const yarnW = cell * 0.19;
     const pinR = cell * 0.25;
     const draggingId = this.drag?.moved ? this.drag.rope : -1;
     const ropes = this.puzzle.aliveRopes.sort((p, q) => {
@@ -718,14 +905,23 @@ export class GameScene extends Scene {
       return p.z - q.z;
     });
     const scissorPulse = this.scissorsMode ? 0.5 + 0.5 * Math.sin(this.time * 8) : 0;
+    const pts = new Map<number, Vec[]>();
+    const widths = new Map<number, number>();
     for (const r of ropes) {
       const e = this.disp.get(r.id)!;
+      const sim = this.sims.get(r.id)!;
       const color = yarnColor(r.color);
       const lifted = r.id === draggingId;
-      drawYarn(ctx, this.screenCurve(e), color, {
-        width: yarnW,
+      // 被拉长时变细，像毛线被扯紧
+      const w = yarnW / Math.sqrt(Math.max(1, sim.stretch));
+      const line = this.ropePts(r.id);
+      pts.set(r.id, line);
+      widths.set(r.id, w);
+      drawYarn(ctx, line, color, {
+        width: w,
         lift: lifted ? 1 : 0,
         glow: this.preview.has(r.id) || (this.scissorsMode && scissorPulse > 0.5),
+        seed: r.id * 97 + 13,
       });
       const pa = toScreen(this.layout, e.ax, e.ay);
       const pb = toScreen(this.layout, e.bx, e.by);
@@ -733,39 +929,55 @@ export class GameScene extends Scene {
       const dragEnd = lifted ? this.drag!.end : null;
       const ring = 'rgba(255,255,255,0.95)';
       const sh = (end: RopeEnd) => (this.shake && this.shake.rope === r.id && this.shake.end === end ? this.shake.t : 0);
+      const sq = (k: number) => {
+        const t = this.pinFx.get(k);
+        return t === undefined ? 0 : 0.22 * Math.exp(-t * 7) * Math.cos(t * 26);
+      };
       drawButton(ctx, pa.x, pa.y, pinR, color, {
         lift: dragEnd === 'a' ? 1 : 0,
         ring: sel === 'a' ? ring : undefined,
         sewn: this.puzzle.isFixed(r.id, 'a'),
         shake: sh('a'),
+        squash: sq(r.id * 2),
       });
       drawButton(ctx, pb.x, pb.y, pinR, color, {
         lift: dragEnd === 'b' ? 1 : 0,
         ring: sel === 'b' ? ring : undefined,
         sewn: this.puzzle.isFixed(r.id, 'b'),
         shake: sh('b'),
+        squash: sq(r.id * 2 + 1),
       });
     }
+    // 环扣：在交叉处画出"勾住"的样子
+    for (const l of this.links) {
+      const lower = pts.get(l.b);
+      if (!lower) continue;
+      const h = toScreen(this.layout, l.h.x, l.h.y);
+      const w = Math.min(widths.get(l.a)!, widths.get(l.b)!);
+      drawYarnWrap(ctx, h, lower, yarnColor(this.puzzle.ropes[l.a].color), yarnColor(this.puzzle.ropes[l.b].color), w, l.b * 97 + 13);
+    }
   }
+
 
   private drawClearing(ctx: Ctx2D): void {
     const cell = this.layout.cell;
     for (const c of this.clearing) {
+      const full = c.pts.map((p) => toScreen(this.layout, p.x, p.y));
       if (c.t < 0) {
         // 排队中：照常显示
-        drawYarn(ctx, this.screenCurve(c.ends), c.color, { width: cell * 0.17, glow: true });
+        drawYarn(ctx, full, c.color, { width: cell * 0.19, glow: true });
         continue;
       }
-      const full = this.screenCurve(c.ends);
       const mid = full[Math.floor(full.length / 2)];
-      const ballR = cell * 0.22;
+      const ballR = cell * 0.24;
       if (c.t < WIND_TIME) {
-        // 毛线两端向中间收，中间长出一个毛线球
+        // 毛线弹直后两端向中间收，中间卷出一个毛线球
         const u = c.t / WIND_TIME;
         const n = full.length - 1;
         const cut = Math.floor((n / 2) * u);
-        const pts = full.slice(cut, n - cut + 1);
-        if (pts.length >= 2) drawYarn(ctx, pts, c.color, { width: cell * 0.17 });
+        const wob = Math.sin(u * Math.PI * 3) * (1 - u) * cell * 0.08;
+        const pts = full.slice(cut, n - cut + 1).map((p, i, arr) => ({ x: p.x, y: p.y + Math.sin((i / Math.max(1, arr.length - 1)) * Math.PI) * wob }));
+        if (pts.length >= 2) drawYarn(ctx, pts, c.color, { width: cell * 0.19, noFuzz: true });
         drawYarnBall(ctx, mid.x, mid.y, ballR * Math.min(1, u * 1.4), c.color, u * 8);
       } else {
         // 抛物线飞进篮子
@@ -781,12 +993,18 @@ export class GameScene extends Scene {
     }
   }
 
+
   /** 第一关的新手引导：手指示范把左下角纽扣拖到右边的空孔 */
   private drawTutorialHand(ctx: Ctx2D): void {
-    if (this.levelIndex !== 0 || this.interacted || this.state !== 'play') return;
+    const hint = this.puzzle.level.hint;
+    if (!hint || this.interacted || this.state !== 'play') return;
     const t = (this.time % 2.2) / 2.2;
-    const from = toScreen(this.layout, 0, 2);
-    const to = toScreen(this.layout, 2, 1);
+    const r = this.puzzle.ropes[hint[0]];
+    const fromHole = hint[1] === 0 ? r.a : r.b;
+    const fp = this.puzzle.geo.pos(fromHole);
+    const tp = this.puzzle.geo.pos(hint[2]);
+    const from = toScreen(this.layout, fp.x, fp.y);
+    const to = toScreen(this.layout, tp.x, tp.y);
     const u = Math.max(0, Math.min(1, (t - 0.15) / 0.6));
     const e = u * u * (3 - 2 * u);
     const x = from.x + (to.x - from.x) * e;
@@ -830,9 +1048,11 @@ export class GameScene extends Scene {
     text(ctx, '步数', 53, y + 18, 12, THEME.textLight);
     const pop = low ? 1 + 0.08 * Math.sin(this.time * 10) : 1;
     text(ctx, String(steps), 53, y + 37, 22 * pop, low ? THEME.danger : THEME.text);
-    // 关卡
-    panel(ctx, W / 2 - 52, y + 8, 104, 36, 18);
-    text(ctx, `第 ${this.levelIndex + 1} 关`, W / 2, y + 26, 17, THEME.text);
+    // 关卡 + 进度条
+    const hard = !!this.puzzle.level.hard;
+    panel(ctx, W / 2 - 50, y + 2, 100, 30, 15, hard ? '#FFE9E4' : THEME.panel);
+    text(ctx, `第 ${this.levelIndex + 1} 关`, W / 2, y + 17.5, 15, hard ? '#C2493E' : THEME.text);
+    levelProgress(ctx, W / 2, y + 50, this.levelIndex, LEVELS.map((lv) => !!lv.hard));
     // 重来、首页
     const r = 22;
     const rx = W - 14 - r;

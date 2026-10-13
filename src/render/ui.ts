@@ -74,14 +74,76 @@ export function pillButton(ctx: Ctx2D, x: number, y: number, w: number, h: numbe
 
 /** 圆形图标按钮 */
 export function roundButton(ctx: Ctx2D, cx: number, cy: number, r: number, pressed: boolean, active = false): void {
-  const dy = pressed ? 2 : 0;
-  fillCircle(ctx, cx, cy + 4, r, 'rgba(120,80,40,0.18)');
-  fillCircle(ctx, cx, cy + dy, r, active ? '#FFE7C2' : THEME.panel);
+  const dy = pressed ? 2.5 : 0;
+  // 底座阴影 + 立体侧边
+  fillCircle(ctx, cx, cy + 5, r, 'rgba(170,100,70,0.22)');
+  fillCircle(ctx, cx, cy + 3, r, active ? '#F2B26A' : '#EED8BC');
+  // 鼓面：上亮下暗
+  const g = ctx.createLinearGradient(0, cy - r + dy, 0, cy + r + dy);
+  g.addColorStop(0, active ? '#FFF1D9' : '#FFFFFF');
+  g.addColorStop(1, active ? '#FFD49A' : '#FFF1E0');
   ctx.beginPath();
-  ctx.arc(cx, cy + dy, r - 1.5, 0, Math.PI * 2);
-  ctx.strokeStyle = active ? THEME.accent : '#F0DEC4';
-  ctx.lineWidth = active ? 3 : 2;
+  ctx.arc(cx, cy + dy, r, 0, Math.PI * 2);
+  ctx.fillStyle = g;
+  ctx.fill();
+  // 缝线圈
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy + dy, r - 4, 0, Math.PI * 2);
+  ctx.setLineDash([3.5, 3]);
+  ctx.strokeStyle = active ? THEME.accent : THEME.stitch;
+  ctx.lineWidth = 1.5;
   ctx.stroke();
+  ctx.restore();
+  // 高光
+  ctx.beginPath();
+  ctx.arc(cx, cy + dy, r - 1.5, Math.PI * 1.15, Math.PI * 1.6);
+  ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+/** 关卡进度条：每 5 关一组，过关打勾、当前关高亮、困难关标红 */
+export function levelProgress(ctx: Ctx2D, cx: number, cy: number, current: number, hard: boolean[]): void {
+  const start = Math.floor(current / 5) * 5;
+  const end = Math.min(hard.length, start + 5);
+  const n = end - start;
+  const gap = 38;
+  const x0 = cx - ((n - 1) / 2) * gap;
+  ctx.strokeStyle = '#EED8BC';
+  ctx.lineWidth = 4;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x0, cy);
+  ctx.lineTo(x0 + (n - 1) * gap, cy);
+  ctx.stroke();
+  for (let i = start; i < end; i++) {
+    const x = x0 + (i - start) * gap;
+    if (i < current) {
+      fillCircle(ctx, x, cy + 1.5, 11, '#5FA84F');
+      fillCircle(ctx, x, cy, 11, '#79C267');
+      ctx.beginPath();
+      ctx.moveTo(x - 5, cy);
+      ctx.lineTo(x - 1.5, cy + 3.5);
+      ctx.lineTo(x + 5, cy - 3.5);
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 2.6;
+      ctx.stroke();
+    } else if (i === current) {
+      fillCircle(ctx, x, cy + 2, 14, '#D9862B');
+      fillCircle(ctx, x, cy, 14, '#F7B54A');
+      fillCircle(ctx, x, cy, 10.5, '#FFE3A3');
+      text(ctx, String(i + 1), x, cy + 0.5, 13, '#8A4F14');
+    } else if (hard[i]) {
+      roundRectPath(ctx, x - 17, cy - 9, 34, 18, 9);
+      ctx.fillStyle = '#F07A6E';
+      ctx.fill();
+      text(ctx, '困难', x, cy + 0.5, 10.5, '#FFFFFF');
+    } else {
+      fillCircle(ctx, x, cy, 10, '#E4D2BC');
+      text(ctx, String(i + 1), x, cy + 0.5, 11, '#A88E72');
+    }
+  }
 }
 
 export function badge(ctx: Ctx2D, cx: number, cy: number, label: string, color = THEME.danger): void {

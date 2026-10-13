@@ -43,6 +43,15 @@ export function segmentsIntersect(p1: Vec, p2: Vec, p3: Vec, p4: Vec): boolean {
   return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
 }
 
+/** 两条线段的交点（严格相交时），否则 null */
+export function segmentIntersection(p1: Vec, p2: Vec, p3: Vec, p4: Vec): Vec | null {
+  if (!segmentsIntersect(p1, p2, p3, p4)) return null;
+  const d = (p2.x - p1.x) * (p4.y - p3.y) - (p2.y - p1.y) * (p4.x - p3.x);
+  if (d === 0) return null;
+  const t = ((p3.x - p1.x) * (p4.y - p3.y) - (p3.y - p1.y) * (p4.x - p3.x)) / d;
+  return { x: p1.x + (p2.x - p1.x) * t, y: p1.y + (p2.y - p1.y) * t };
+}
+
 /** 两根毛线贴得比这个更近就视为重叠（约等于毛线粗细，网格单位） */
 export const ROPE_TOUCH = 0.12;
 
@@ -79,7 +88,7 @@ export function distToPolyline(p: Vec, line: Vec[]): number {
 }
 
 /** 毛线压到别人纽扣上的判定半径（纽扣半径 + 毛线半宽，网格单位） */
-export const PIN_BLOCK_R = 0.32;
+export const PIN_BLOCK_R = 0.3;
 
 /** 两根毛线是否缠在一起：曲线相交，或者一根压在另一根的纽扣上 */
 export function curvesTangled(a: Vec[], b: Vec[]): boolean {

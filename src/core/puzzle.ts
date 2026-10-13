@@ -26,7 +26,7 @@ export class Puzzle {
   private zCounter: number;
 
   constructor(readonly level: LevelData) {
-    this.geo = new BoardGeo(level.cols, level.rows, level.mask);
+    this.geo = new BoardGeo(level.holes);
     this.rules = makeRules(level, this.geo);
     this.ropes = level.ropes.map(([color, a, b], i) => ({ id: i, color, a, b, z: i, alive: true }));
     this.zCounter = this.ropes.length;

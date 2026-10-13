@@ -5,25 +5,11 @@ import { BoardGeo, LevelData } from '../src/core/board';
 import { makeRng, shuffle } from '../src/core/rng';
 import { makeRules, tangleCounts } from '../src/core/rules';
 import { solve } from '../src/core/solver';
-
-const MASKS = {
-  rect3x3: ['###', '###', '###'],
-  rect3x4: ['###', '###', '###', '###'],
-  rect4x4: ['####', '####', '####', '####'],
-  rect4x5: ['####', '####', '####', '####', '####'],
-  rect5x5: ['#####', '#####', '#####', '#####', '#####'],
-  rect5x6: ['#####', '#####', '#####', '#####', '#####', '#####'],
-  rect5x7: ['#####', '#####', '#####', '#####', '#####', '#####', '#####'],
-  catHead: ['#...#', '##.##', '#####', '#####', '#####', '.###.'],
-  catHead7: ['#...#', '##.##', '#####', '#####', '#####', '#####', '.###.'],
-  paw: ['.#.#.', '##.##', '.###.', '#####', '#####', '.###.'],
-  paw7: ['.#.#.', '##.##', '#.#.#', '.###.', '#####', '#####', '.###.'],
-  fish: ['..#..', '.###.', '#####', '#####', '.###.', '#.#.#'],
-  heart: ['.#.#.', '#####', '#####', '#####', '#####', '.###.', '..#..'],
-};
+import { MapName, MAPS } from './maps';
 
 interface Plan {
-  mask: keyof typeof MASKS;
+  map: MapName;
+  hard?: boolean;
   ropes: number;
   minPar: number;
   maxPar: number;
@@ -39,20 +25,20 @@ interface Plan {
 
 // 1~5 关入门，6 关起依次引入：缝住的纽扣(6) -> 打盹的小猫(9) -> 毛线锁(12)
 const PLANS: Plan[] = [
-  { mask: 'rect3x4', ropes: 3, minPar: 2, maxPar: 2, slack: 2 },
-  { mask: 'rect4x4', ropes: 4, minPar: 3, maxPar: 3, slack: 2 },
-  { mask: 'rect4x5', ropes: 5, minPar: 3, maxPar: 4, slack: 2 },
-  { mask: 'catHead', ropes: 6, minPar: 4, maxPar: 5, slack: 2 },
-  { mask: 'rect5x5', ropes: 6, minPar: 5, maxPar: 6, slack: 2, fixed: 3 },
-  { mask: 'paw', ropes: 7, minPar: 6, maxPar: 7, slack: 2, fixed: 4 },
-  { mask: 'rect5x6', ropes: 8, minPar: 6, maxPar: 8, slack: 1, fixed: 4 },
-  { mask: 'fish', ropes: 7, minPar: 6, maxPar: 8, slack: 2, fixed: 2, sleepers: [2] },
-  { mask: 'heart', ropes: 8, minPar: 7, maxPar: 9, slack: 1, fixed: 3, sleepers: [3] },
-  { mask: 'rect5x7', ropes: 9, minPar: 8, maxPar: 10, slack: 1, fixed: 4, sleepers: [2, 4] },
-  { mask: 'catHead7', ropes: 8, minPar: 7, maxPar: 9, slack: 2, fixed: 3, locks: 2 },
-  { mask: 'paw7', ropes: 9, minPar: 8, maxPar: 11, slack: 1, fixed: 3, sleepers: [3], locks: 2 },
-  { mask: 'rect5x7', ropes: 10, minPar: 9, maxPar: 12, slack: 1, fixed: 4, sleepers: [3], locks: 2 },
-  { mask: 'heart', ropes: 10, minPar: 9, maxPar: 13, slack: 1, fixed: 5, sleepers: [2, 5], locks: 3 },
+  { map: 'brackets', ropes: 3, minPar: 2, maxPar: 3, slack: 2 },
+  { map: 'kitty', ropes: 4, minPar: 3, maxPar: 4, slack: 2 },
+  { map: 'fish', ropes: 5, minPar: 4, maxPar: 5, slack: 2 },
+  { map: 'wreath', ropes: 6, minPar: 5, maxPar: 6, slack: 1, hard: true },
+  { map: 'paw', ropes: 6, minPar: 5, maxPar: 6, slack: 2, fixed: 3 },
+  { map: 'basket', ropes: 7, minPar: 6, maxPar: 7, slack: 2, fixed: 3 },
+  { map: 'capy', ropes: 8, minPar: 7, maxPar: 8, slack: 1, fixed: 3, hard: true },
+  { map: 'fishbone', ropes: 6, minPar: 5, maxPar: 7, slack: 2, fixed: 2, sleepers: [2] },
+  { map: 'twins', ropes: 7, minPar: 6, maxPar: 8, slack: 2, fixed: 3, sleepers: [3] },
+  { map: 'heart', ropes: 8, minPar: 7, maxPar: 9, slack: 1, fixed: 3, sleepers: [2, 4], hard: true },
+  { map: 'moon', ropes: 6, minPar: 5, maxPar: 7, slack: 2, fixed: 2, locks: 2 },
+  { map: 'spiral', ropes: 7, minPar: 6, maxPar: 8, slack: 1, fixed: 3, sleepers: [3], locks: 1 },
+  { map: 'quilt', ropes: 7, minPar: 6, maxPar: 8, slack: 1, fixed: 3, sleepers: [2], locks: 2 },
+  { map: 'grand', ropes: 9, minPar: 8, maxPar: 11, slack: 1, fixed: 4, sleepers: [2, 5], locks: 2, hard: true },
 ];
 
 const COLOR_COUNT = 10;
@@ -64,7 +50,7 @@ function holesOf(geo: BoardGeo): number[] {
 }
 
 /** 随机摆一组毛线，要求每根都至少和一根缠住 */
-function randomLayout(geo: BoardGeo, mask: string[], n: number, rnd: () => number): [number, number][] | null {
+function randomLayout(geo: BoardGeo, holes0: [number, number][], n: number, rnd: () => number): [number, number][] | null {
   const holes = holesOf(geo);
   const ropes: [number, number][] = [];
   const used = new Set<number>();
@@ -77,7 +63,7 @@ function randomLayout(geo: BoardGeo, mask: string[], n: number, rnd: () => numbe
       const pa = geo.pos(a);
       const pb = geo.pos(b);
       const len = Math.hypot(pa.x - pb.x, pa.y - pb.y);
-      if (len < 1.9 || len > 4.6) continue;
+      if (len < 1.6 || len > 5.2) continue;
       ropes.push([a, b]);
       used.add(a);
       used.add(b);
@@ -85,7 +71,7 @@ function randomLayout(geo: BoardGeo, mask: string[], n: number, rnd: () => numbe
     }
     if (!placed) return null;
   }
-  const lv = { cols: geo.cols, rows: geo.rows, mask, ropes: ropes.map(([a, b]) => [0, a, b] as [number, number, number]), steps: 0, par: 0 };
+  const lv: LevelData = { holes: holes0, pieces: [], ropes: ropes.map(([a, b]) => [0, a, b] as [number, number, number]), steps: 0, par: 0 };
   const { counts } = tangleCounts(makeRules(lv, geo), ropes.flat());
   return counts.every((c) => c > 0) ? ropes : null;
 }
@@ -127,27 +113,27 @@ function mutate(plan: Plan, geo: BoardGeo, lv: LevelData, rnd: () => number): Le
     const other = geo.pos(ropes[r][3 - end]);
     const p = geo.pos(h);
     const len = Math.hypot(p.x - other.x, p.y - other.y);
-    if (len >= 1.9 && len <= 4.6) ropes[r][end] = h;
+    if (len >= 1.6 && len <= 5.2) ropes[r][end] = h;
     return { ...lv, ropes };
   }
   return { ...lv, ...decorate(plan, geo, ropes.map(([, a, b]) => [a, b]), rnd) };
 }
 
 function generate(plan: Plan, seed: number): LevelData {
-  const mask = MASKS[plan.mask];
-  const geo = new BoardGeo(mask[0].length, mask.length, mask);
+  const map = MAPS[plan.map]();
+  const geo = new BoardGeo(map.holes);
   const rnd = makeRng(seed);
   const t0 = Date.now();
   // 1) 随机出若干初始布局，取最难的
   let cur: { lv: LevelData; par: number } | null = null;
   for (let attempt = 0; attempt < 300 && Date.now() - t0 < 15000; attempt++) {
-    const ropes = randomLayout(geo, mask, plan.ropes, rnd);
+    const ropes = randomLayout(geo, map.holes, plan.ropes, rnd);
     if (!ropes) continue;
     const colors = shuffle([...Array(COLOR_COUNT).keys()], rnd);
     const lv: LevelData = {
-      cols: geo.cols,
-      rows: geo.rows,
-      mask,
+      holes: map.holes,
+      pieces: map.pieces,
+      ...(plan.hard ? { hard: true } : {}),
       ropes: ropes.map(([a, b], i) => [colors[i % COLOR_COUNT], a, b]),
       steps: 0,
       par: 0,
@@ -170,17 +156,19 @@ function generate(plan: Plan, seed: number): LevelData {
   return { ...cur.lv, par, steps: par + plan.slack };
 }
 
-// 第 1 关手工设计：两根交叉的毛线，挪一下就解开
+// 第 1 关手工设计：两根交叉的毛线，把左下角纽扣挪到右边中间的孔就解开
+// 孔位顺序：上布条 0,1,2；下布条 3,4,5；猫脸左右 6,7
+const tutorialMap = MAPS.tutorial();
 const tutorial: LevelData = {
-  cols: 3,
-  rows: 3,
-  mask: MASKS.rect3x3,
+  holes: tutorialMap.holes,
+  pieces: tutorialMap.pieces,
   ropes: [
-    [0, 0, 8],
-    [3, 2, 6],
+    [0, 0, 5],
+    [3, 2, 3],
   ],
   steps: 3,
   par: 1,
+  hint: [1, 1, 7],
 };
 
 const only = process.argv[2] ? Number(process.argv[2]) : -1;
@@ -191,7 +179,7 @@ PLANS.forEach((plan, i) => {
   const lv = generate(plan, 2024 + i * 7919);
   levels.push(lv);
   const mech = [lv.fixed && `缝住${lv.fixed.length}`, lv.sleepers && `小猫${lv.sleepers.length}`, lv.locks && `锁${lv.locks.length}`].filter(Boolean).join(' ');
-  console.log(`关卡 ${i + 2}: ${plan.mask} 毛线×${plan.ropes} ${mech} 参考${lv.par}步(目标${plan.minPar}-${plan.maxPar}) 给${lv.steps}步 (${((Date.now() - t) / 1000).toFixed(1)}s)`);
+  console.log(`关卡 ${i + 2}: ${plan.map} 毛线×${plan.ropes} ${mech} 参考${lv.par}步(目标${plan.minPar}-${plan.maxPar}) 给${lv.steps}步 (${((Date.now() - t) / 1000).toFixed(1)}s)`);
 });
 
 if (only < 0) {
