@@ -27,6 +27,8 @@ export interface TouchHandlers {
 export interface Sfx {
   /** 播放一个合成音效（无音频资源，全部实时合成） */
   play(name: 'pick' | 'drop' | 'clear' | 'win' | 'lose' | 'tap' | 'snip'): void;
+  /** 自定义音符序列：f 起始频率，f2 结束频率（滑音），at 起始时刻（秒），dur 时长 */
+  tone(notes: { f: number; f2?: number; at: number; dur: number; type?: string; vol?: number }[]): void;
   enabled: boolean;
 }
 

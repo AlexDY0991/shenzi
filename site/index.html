@@ -161,6 +161,7 @@
         box-shadow: 0 3px 0 var(--leaf-deep);
       }
 
+      .protos a { color: var(--ink); font-weight: 700; text-underline-offset: 4px; }
       .mechs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
       .mech {
         min-width: 0;
@@ -273,6 +274,14 @@
               <p>上锁的孔放不了纽扣。理顺同色的毛线，锁就会打开。</p>
             </article>
           </div>
+        </section>
+
+        <section>
+          <h2>新玩法样张</h2>
+          <ul class="steps protos">
+            <li><a data-proto href="catjam.html">猫咪排队出门</a>：点一只猫，它会朝脸的方向走出房间；前面有猫挡着就撞头扣心。</li>
+            <li><a data-proto href="knit.html">拆毛衣</a>：点线轴挂到架子上，它会抽走露在边上的同色毛线；架子挂满又抽不到线就输了。</li>
+          </ul>
         </section>
 
         <footer>演示版。画面和音效全部由代码实时绘制、合成，没有使用任何图片或音频素材。微信小游戏版本开发中。<br />版本 <span id="build"></span></footer>

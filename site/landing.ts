@@ -87,6 +87,9 @@ window.addEventListener('resize', drawPaws);
 const playUrl = `play.html?v=${encodeURIComponent(__BUILD__)}`;
 (document.getElementById('play-link') as HTMLAnchorElement).href = playUrl;
 document.getElementById('build')!.textContent = __BUILD__;
+document.querySelectorAll<HTMLAnchorElement>('a[data-proto]').forEach((a) => {
+  a.href = `${a.getAttribute('href')}?v=${encodeURIComponent(__BUILD__)}`;
+});
 
 // 只有宽屏才在页面里嵌入试玩（窄屏直接点按钮进全屏试玩页）
 const wide = window.matchMedia('(min-width: 861px)');

@@ -96,6 +96,32 @@ const protoOpts = {
   ],
 };
 
+// 新玩法样张（Canvas 2D）：dist/site/<name>.html
+const GAMES2D = [
+  { name: 'catjam', title: '猫咪排队出门 · 样张' },
+  { name: 'knit', title: '拆毛衣 · 样张' },
+];
+const games2dOpts = GAMES2D.map((g) => ({
+  ...common,
+  entryPoints: [`proto2d/${g.name}/main.ts`],
+  outfile: `dist/proto2d/${g.name}.js`,
+  plugins: [
+    {
+      name: `${g.name}-html`,
+      setup: (b) =>
+        b.onEnd((r) => {
+          if (r.errors.length) return;
+          const js = readFileSync(`dist/proto2d/${g.name}.js`, 'utf8').replace(/<\/script/g, '<\\/script');
+          const html = readFileSync('proto2d/index.html', 'utf8')
+            .replace('/*TITLE*/', g.title)
+            .replace('<script>/*BUNDLE*/</script>', () => `<script>${js}</script>`);
+          mkdirSync('dist/site', { recursive: true });
+          writeFileSync(`dist/site/${g.name}.html`, html);
+        }),
+    },
+  ],
+}));
+
 if (watch) {
   const [w, x] = await Promise.all([esbuild.context(webOpts), esbuild.context(wxOpts)]);
   await Promise.all([w.watch(), x.watch()]);
@@ -103,11 +129,13 @@ if (watch) {
   await site.watch();
   const proto = await esbuild.context(protoOpts);
   await proto.watch();
+  for (const o of games2dOpts) await (await esbuild.context(o)).watch();
   console.log('watching… 打开 dist/web/index.html 预览');
 } else {
   await Promise.all([esbuild.build(webOpts), esbuild.build(wxOpts)]);
   await esbuild.build(siteOpts);
   await esbuild.build(protoOpts);
+  await Promise.all(games2dOpts.map((o) => esbuild.build(o)));
   // 微信小游戏包里不能出现浏览器专属全局对象
   const wx = readFileSync('dist/wechat/game.js', 'utf8');
   const banned = ['document.', 'window.', 'localStorage', 'navigator.', 'Path2D', '.roundRect(', '.ellipse('].filter((k) => wx.includes(k));
