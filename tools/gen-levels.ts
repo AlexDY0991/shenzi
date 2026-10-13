@@ -3,7 +3,7 @@
 import { writeFileSync } from 'node:fs';
 import { BoardGeo, LevelData } from '../src/core/board';
 import { makeRng, shuffle } from '../src/core/rng';
-import { makeRules, tangleCounts } from '../src/core/rules';
+import { initialState, makeRules, tangleCounts } from '../src/core/rules';
 import { solve } from '../src/core/solver';
 import { MapName, MAPS } from './maps';
 
@@ -26,19 +26,19 @@ interface Plan {
 // 1~5 关入门，6 关起依次引入：缝住的纽扣(6) -> 打盹的小猫(9) -> 毛线锁(12)
 const PLANS: Plan[] = [
   { map: 'brackets', ropes: 3, minPar: 2, maxPar: 3, slack: 2 },
-  { map: 'kitty', ropes: 4, minPar: 3, maxPar: 4, slack: 2 },
-  { map: 'fish', ropes: 5, minPar: 4, maxPar: 5, slack: 2 },
-  { map: 'wreath', ropes: 6, minPar: 5, maxPar: 6, slack: 1, hard: true },
-  { map: 'paw', ropes: 6, minPar: 5, maxPar: 6, slack: 2, fixed: 3 },
-  { map: 'basket', ropes: 7, minPar: 6, maxPar: 7, slack: 2, fixed: 3 },
-  { map: 'capy', ropes: 8, minPar: 7, maxPar: 8, slack: 1, fixed: 3, hard: true },
-  { map: 'fishbone', ropes: 6, minPar: 5, maxPar: 7, slack: 2, fixed: 2, sleepers: [2] },
-  { map: 'twins', ropes: 7, minPar: 6, maxPar: 8, slack: 2, fixed: 3, sleepers: [3] },
-  { map: 'heart', ropes: 8, minPar: 7, maxPar: 9, slack: 1, fixed: 3, sleepers: [2, 4], hard: true },
-  { map: 'moon', ropes: 6, minPar: 5, maxPar: 7, slack: 2, fixed: 2, locks: 2 },
-  { map: 'spiral', ropes: 7, minPar: 6, maxPar: 8, slack: 1, fixed: 3, sleepers: [3], locks: 1 },
-  { map: 'quilt', ropes: 7, minPar: 6, maxPar: 8, slack: 1, fixed: 3, sleepers: [2], locks: 2 },
-  { map: 'grand', ropes: 9, minPar: 8, maxPar: 11, slack: 1, fixed: 4, sleepers: [2, 5], locks: 2, hard: true },
+  { map: 'kitty', ropes: 4, minPar: 3, maxPar: 5, slack: 2 },
+  { map: 'fish', ropes: 5, minPar: 4, maxPar: 6, slack: 2 },
+  { map: 'wreath', ropes: 6, minPar: 6, maxPar: 8, slack: 1, hard: true },
+  { map: 'paw', ropes: 6, minPar: 6, maxPar: 8, slack: 2, fixed: 3 },
+  { map: 'basket', ropes: 7, minPar: 7, maxPar: 9, slack: 2, fixed: 3 },
+  { map: 'capy', ropes: 8, minPar: 9, maxPar: 11, slack: 1, fixed: 3, hard: true },
+  { map: 'fishbone', ropes: 6, minPar: 6, maxPar: 8, slack: 2, fixed: 2, sleepers: [2] },
+  { map: 'twins', ropes: 7, minPar: 7, maxPar: 10, slack: 2, fixed: 3, sleepers: [3] },
+  { map: 'heart', ropes: 8, minPar: 9, maxPar: 12, slack: 1, fixed: 3, sleepers: [2, 4], hard: true },
+  { map: 'moon', ropes: 6, minPar: 6, maxPar: 8, slack: 2, fixed: 2, locks: 2 },
+  { map: 'spiral', ropes: 7, minPar: 8, maxPar: 10, slack: 1, fixed: 3, sleepers: [3], locks: 1 },
+  { map: 'quilt', ropes: 7, minPar: 8, maxPar: 10, slack: 1, fixed: 3, sleepers: [2], locks: 2 },
+  { map: 'grand', ropes: 9, minPar: 10, maxPar: 13, slack: 1, fixed: 4, sleepers: [2, 5], locks: 2, hard: true },
 ];
 
 const COLOR_COUNT = 10;
@@ -72,8 +72,7 @@ function randomLayout(geo: BoardGeo, holes0: [number, number][], n: number, rnd:
     if (!placed) return null;
   }
   const lv: LevelData = { holes: holes0, pieces: [], ropes: ropes.map(([a, b]) => [0, a, b] as [number, number, number]), steps: 0, par: 0 };
-  const { counts } = tangleCounts(makeRules(lv, geo), ropes.flat());
-  return counts.every((c) => c > 0) ? ropes : null;
+  return allTangled(lv, geo) ? ropes : null;
 }
 
 /** 在布局上随机加特殊机制 */
@@ -92,17 +91,31 @@ function decorate(plan: Plan, geo: BoardGeo, ropes: [number, number][], rnd: () 
 }
 
 function allTangled(lv: LevelData, geo: BoardGeo): boolean {
-  const { counts } = tangleCounts(makeRules(lv, geo), lv.ropes.flatMap(([, a, b]) => [a, b]));
-  return counts.every((c) => c > 0);
+  const R = makeRules(lv, geo);
+  return tangleCounts(R, initialState(R, lv)).every((c) => c > 0);
+}
+
+function parOf(lv: LevelData, geo: BoardGeo, beam: number): number {
+  const R = makeRules(lv, geo);
+  return solve(R, initialState(R, lv), beam, 30);
 }
 
 function quickPar(lv: LevelData, geo: BoardGeo): number {
-  return solve(makeRules(lv, geo), lv.ropes.flatMap(([, a, b]) => [a, b]), 40, 30);
+  return parOf(lv, geo, 40);
 }
 
 /** 随机微调：挪一个端点，或者重新随机机制 */
 function mutate(plan: Plan, geo: BoardGeo, lv: LevelData, rnd: () => number): LevelData {
   const ropes = lv.ropes.map((r) => [...r] as [number, number, number]);
+  if (rnd() < 0.2) {
+    // 交换两根毛线的位置：改变谁压着谁（数组顺序 = 叠放顺序）
+    const i = Math.floor(rnd() * ropes.length);
+    const j = Math.floor(rnd() * ropes.length);
+    const [, ai, bi] = ropes[i];
+    ropes[i] = [ropes[i][0], ropes[j][1], ropes[j][2]];
+    ropes[j] = [ropes[j][0], ai, bi];
+    return { ...lv, ropes };
+  }
   if (rnd() < 0.75) {
     const used = new Set(ropes.flatMap(([, a, b]) => [a, b]));
     for (const [h] of lv.locks ?? []) used.add(h);
@@ -152,7 +165,7 @@ function generate(plan: Plan, seed: number): LevelData {
     if (par >= cur.par && par <= plan.maxPar) cur = { lv, par };
   }
   // 3) 宽束复核（宽束可能找到更短的解，以它为准）
-  const par = Math.min(cur.par, solve(makeRules(cur.lv, geo), cur.lv.ropes.flatMap(([, a, b]) => [a, b]), 600, 30));
+  const par = Math.min(cur.par, parOf(cur.lv, geo, 600));
   return { ...cur.lv, par, steps: par + plan.slack };
 }
 

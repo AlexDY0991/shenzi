@@ -1,5 +1,5 @@
 import { segmentIntersection, Vec } from '../core/geometry';
-import { Puzzle, RopeEnd } from '../core/puzzle';
+import { Puzzle, Rope, RopeEnd } from '../core/puzzle';
 import { Ctx2D, Surface } from '../platform/types';
 import { BoardLayout, drawBoard, drawFabricFaces, HOLE_R, levelBounds, toScreen } from '../render/board';
 import { basketBallPos, CatState, drawBasket, drawCat, newCatState } from '../render/cat';
@@ -7,7 +7,7 @@ import { shade, THEME, yarnColor } from '../render/colors';
 import { ellipsePath, fillCircle, heart, pawPrint, roundRectPath, star, text } from '../render/shapes';
 import { drawKitten, drawLock } from '../render/mechanics';
 import { badge, catEarPanel, iconHome, iconRestart, iconScissors, iconSteps, levelProgress, panel, pillButton, roundButton, speechBubble } from '../render/ui';
-import { drawButton, drawYarn, drawYarnBall, drawYarnWrap, setSpriteFactory } from '../render/yarn';
+import { drawButton, drawYarn, drawYarnBall, drawYarnPatch, drawYarnWrap, setSpriteFactory } from '../render/yarn';
 import { applyLink, RopeSim } from './rope-sim';
 import type { App } from './app';
 import { LEVELS } from './levels';
@@ -54,12 +54,41 @@ interface Particle {
 }
 
 interface Link {
+  /** 上层毛线 */
   a: number;
+  /** 下层毛线 */
   b: number;
   ia: number;
   ib: number;
   /** 环扣位置（棋盘单位） */
   h: Vec;
+  /** 两根已经不相交但下层仍被勾着（画成环扣，下层弯过去挂在上层上） */
+  caught: boolean;
+}
+
+/** 线段 p-q 上离点 h 最近处的参数 t（0~1） */
+function paramOn(p: Vec, q: Vec, h: Vec): number {
+  const vx = q.x - p.x;
+  const vy = q.y - p.y;
+  const l2 = vx * vx + vy * vy || 1;
+  return Math.max(0, Math.min(1, ((h.x - p.x) * vx + (h.y - p.y) * vy) / l2));
+}
+
+/** 两条线段之间最近的一对点的参数 */
+function closestParams(p1: Vec, p2: Vec, q1: Vec, q2: Vec): [number, number] {
+  let best: [number, number] = [0.5, 0.5];
+  let bd = Infinity;
+  for (let i = 0; i <= 16; i++) {
+    const t = i / 16;
+    const pt = { x: p1.x + (p2.x - p1.x) * t, y: p1.y + (p2.y - p1.y) * t };
+    const u = paramOn(q1, q2, pt);
+    const d = Math.hypot(pt.x - (q1.x + (q2.x - q1.x) * u), pt.y - (q1.y + (q2.y - q1.y) * u));
+    if (d < bd) {
+      bd = d;
+      best = [t, u];
+    }
+  }
+  return best;
 }
 
 const WIND_TIME = 0.32;
@@ -68,6 +97,11 @@ const STEP_PROP = 5;
 
 /** 特殊机制介绍：在第一次出现的关卡开局弹出 */
 const MECHANICS = [
+  {
+    key: 'layers' as const,
+    title: '毛线有上下层',
+    lines: ['被压在下面的毛线，挪开纽扣也会被勾住；', '先挪压在上面的那根，', '下面的才能解开。'],
+  },
   {
     key: 'fixed' as const,
     title: '缝住的纽扣',
@@ -129,6 +163,8 @@ export class GameScene extends Scene {
   private prevLocks: [number, number][] = [];
   private sims = new Map<number, RopeSim>();
   private links: Link[] = [];
+  /** 每对缠着的毛线最近一次的勾点参数 [上层 t, 下层 t] */
+  private hooks = new Map<number, [number, number]>();
   private linkKeys = new Set<string>();
   /** 纽扣落孔的压扁动画：key = 毛线*2+端 */
   private pinFx = new Map<number, number>();
@@ -154,8 +190,9 @@ export class GameScene extends Scene {
       this.sims.set(r.id, new RopeSim(e.ax, e.ay, e.bx, e.by));
     }
     this.onResize();
-    this.say(levelIndex === 0 ? '拖动纽扣，把毛线解开喵～' : TIPS_START[levelIndex % TIPS_START.length], 3.5);
-    this.intro = MECHANICS.find((m) => LEVELS.findIndex((lv) => (lv[m.key]?.length ?? 0) > 0) === levelIndex) ?? null;
+    this.say(levelIndex === 0 ? '先挪压在上面的那根喵～' : TIPS_START[levelIndex % TIPS_START.length], 3.5);
+    this.intro =
+      MECHANICS.find((m) => (m.key === 'layers' ? levelIndex === 1 : LEVELS.findIndex((lv) => (lv[m.key]?.length ?? 0) > 0) === levelIndex)) ?? null;
     this.snapshotMechanics();
   }
 
@@ -390,9 +427,14 @@ export class GameScene extends Scene {
     this.sims.get(rope)!.pluck(0.09);
     this.app.platform.sfx.play('drop');
     if (!cleared.length) this.app.platform.haptic('medium');
+    const caught = this.puzzle
+      .tangledPairs()
+      .some((p) => p.bottom === rope && !this.puzzle.geo.crossing(this.puzzle.ropes[p.top].a, this.puzzle.ropes[p.top].b, this.puzzle.ropes[rope].a, this.puzzle.ropes[rope].b));
     if (cleared.length) {
       this.startClearing(cleared);
       this.afterChange();
+    } else if (caught) {
+      this.say('它被上面的毛线压着，先挪上面那根喵～', 2.6);
     } else if (this.puzzle.stepsLeft <= 2 && this.puzzle.stepsLeft > 0) this.say('步数不多了喵！');
   }
 
@@ -563,34 +605,51 @@ export class GameScene extends Scene {
       const e = this.disp.get(r.id)!;
       this.sims.get(r.id)!.setEnds(e.ax, e.ay, e.bx, e.by);
     }
-    // 环扣按当前显示位置的交叉来算，拖动中也会实时勾住 / 滑脱
+    // 环扣来自规则里"谁压着谁"：
+    // - 显示位置仍交叉：在交点勾着
+    // - 不再交叉但下层被勾住（caught）：下层弯过去挂在上层上，用上次的勾点
+    // - 拖着上层离开交叉：视觉上提前松开（松手后规则同样会松开）
     const links: Link[] = [];
     const keys = new Set<string>();
-    for (let i = 0; i < alive.length; i++) {
-      for (let j = i + 1; j < alive.length; j++) {
-        const A = alive[i];
-        const B = alive[j];
-        const ea = this.disp.get(A.id)!;
-        const eb = this.disp.get(B.id)!;
-        const pa = { x: ea.ax, y: ea.ay };
-        const pb = { x: ea.bx, y: ea.by };
-        const qa = { x: eb.ax, y: eb.ay };
-        const qb = { x: eb.bx, y: eb.by };
-        const h = segmentIntersection(pa, pb, qa, qb);
-        if (!h) continue;
-        const la = Math.hypot(pb.x - pa.x, pb.y - pa.y) || 1;
-        const lb = Math.hypot(qb.x - qa.x, qb.y - qa.y) || 1;
-        const ta = Math.hypot(h.x - pa.x, h.y - pa.y) / la;
-        const tb = Math.hypot(h.x - qa.x, h.y - qa.y) / lb;
-        // 交点太靠近纽扣时不画环扣（避免和纽扣挤在一起）
-        if (Math.min(ta, 1 - ta) * la < 0.35 || Math.min(tb, 1 - tb) * lb < 0.35) continue;
-        const [up, lo] = A.z > B.z ? [A, B] : [B, A];
-        const [tu, tl] = A.z > B.z ? [ta, tb] : [tb, ta];
-        const su = this.sims.get(up.id)!;
-        const sl = this.sims.get(lo.id)!;
-        links.push({ a: up.id, b: lo.id, ia: su.indexAt(tu), ib: sl.indexAt(tl), h });
-        keys.add(`${up.id}-${lo.id}`);
+    const dragging = this.drag?.moved ? this.drag.rope : -1;
+    const seg = (id: number) => {
+      const e = this.disp.get(id)!;
+      return [{ x: e.ax, y: e.ay }, { x: e.bx, y: e.by }] as const;
+    };
+    for (const { top, bottom } of this.puzzle.tangledPairs()) {
+      const [pa, pb] = seg(top);
+      const [qa, qb] = seg(bottom);
+      const code = top * 32 + bottom;
+      const h = segmentIntersection(pa, pb, qa, qb);
+      let tTop: number;
+      let tBottom: number;
+      let caught = false;
+      if (h) {
+        tTop = paramOn(pa, pb, h);
+        tBottom = paramOn(qa, qb, h);
+        this.hooks.set(code, [tTop, tBottom]);
+      } else if (top === dragging) {
+        continue;
+      } else {
+        caught = true;
+        const saved = this.hooks.get(code) ?? closestParams(pa, pb, qa, qb);
+        this.hooks.set(code, saved);
+        [tTop, tBottom] = saved;
       }
+      const st = this.sims.get(top)!;
+      const sb = this.sims.get(bottom)!;
+      links.push({ a: top, b: bottom, ia: st.indexAt(tTop), ib: sb.indexAt(tBottom), h: h ?? st.pts[st.indexAt(tTop)], caught });
+      keys.add(`${top}-${bottom}`);
+    }
+    // 被勾住的毛线要绕到勾点再回来，自然长度按折线算
+    for (const r of alive) this.sims.get(r.id)!.targetLen = undefined;
+    for (const l of links) {
+      if (!l.caught) continue;
+      const [qa, qb] = seg(l.b);
+      const p = this.sims.get(l.a)!.pts[l.ia];
+      const len = Math.hypot(p.x - qa.x, p.y - qa.y) + Math.hypot(qb.x - p.x, qb.y - p.y);
+      const sb = this.sims.get(l.b)!;
+      sb.targetLen = Math.max(sb.targetLen ?? 0, len);
     }
     // 环扣松脱：轻轻"嘣"一声，被松开的毛线自己弹回去
     for (const k of this.linkKeys) {
@@ -608,9 +667,8 @@ export class GameScene extends Scene {
     for (let n = 0; n < steps; n++) {
       for (const r of alive) this.sims.get(r.id)!.step(1 / 60);
       for (const l of links) {
-        const dragging = this.drag?.moved ? this.drag.rope : -1;
-        // 被拖的那根更"有力"，会扯着另一根走
-        const w = l.a === dragging ? 0.15 : l.b === dragging ? 0.85 : 0.5;
+        // 被勾住时下层被拽向上层；普通交叉时被拖的那根更"有力"，会扯着另一根走
+        const w = l.caught ? 0.12 : l.a === dragging ? 0.15 : l.b === dragging ? 0.85 : 0.5;
         l.h = applyLink(this.sims.get(l.a)!, l.ia, this.sims.get(l.b)!, l.ib, w);
       }
     }
@@ -826,7 +884,16 @@ export class GameScene extends Scene {
     const cy = y + 104;
     const r = 26;
     fillCircle(ctx, W / 2, cy, 50, THEME.board);
-    if (m.key === 'fixed') drawButton(ctx, W / 2, cy, r, yarnColor(6), { sewn: true });
+    if (m.key === 'layers') {
+      // 粉色压在蓝色上面，箭头指向上层
+      drawYarn(ctx, [{ x: W / 2 - 40, y: cy - 30 }, { x: W / 2 + 40, y: cy + 30 }], yarnColor(5), { width: 10 });
+      drawYarn(ctx, [{ x: W / 2 + 40, y: cy - 30 }, { x: W / 2 - 40, y: cy + 30 }], yarnColor(7), { width: 10 });
+      drawButton(ctx, W / 2 - 40, cy - 30, 11, yarnColor(5));
+      drawButton(ctx, W / 2 + 40, cy + 30, 11, yarnColor(5));
+      drawButton(ctx, W / 2 + 40, cy - 30, 11, yarnColor(7));
+      drawButton(ctx, W / 2 - 40, cy + 30, 11, yarnColor(7));
+      text(ctx, '← 先挪我', W / 2 + 92, cy - 30, 13, '#C2493E', { stroke: '#FFFFFF', strokeW: 4 });
+    } else if (m.key === 'fixed') drawButton(ctx, W / 2, cy, r, yarnColor(6), { sewn: true });
     else if (m.key === 'sleepers') {
       drawYarn(ctx, [{ x: W / 2 - 46, y: cy + 6 }, { x: W / 2 + 46, y: cy + 6 }], yarnColor(5), { width: 9 });
       drawKitten(ctx, W / 2, cy, 30, this.time, 2);
@@ -883,6 +950,30 @@ export class GameScene extends Scene {
     }
   }
 
+  /**
+   * 绘制顺序：按"谁压着谁"做拓扑排序（下层先画），同层按最近挪动顺序；
+   * 被拖着的那根拎在最上面。出现环形压住时剩下的按挪动顺序补上。
+   */
+  private drawOrder(draggingId: number): Rope[] {
+    const alive = this.puzzle.aliveRopes.filter((r) => r.id !== draggingId).sort((p, q) => p.z - q.z);
+    const ids = new Set(alive.map((r) => r.id));
+    const below = new Map<number, number>();
+    for (const r of alive) below.set(r.id, 0);
+    const pairs = this.puzzle.tangledPairs().filter((p) => ids.has(p.top) && ids.has(p.bottom));
+    for (const p of pairs) below.set(p.top, below.get(p.top)! + 1);
+    const out: Rope[] = [];
+    const done = new Set<number>();
+    while (out.length < alive.length) {
+      let next = alive.find((r) => !done.has(r.id) && below.get(r.id) === 0);
+      if (!next) next = alive.find((r) => !done.has(r.id))!;
+      done.add(next.id);
+      out.push(next);
+      for (const p of pairs) if (p.bottom === next.id && !done.has(p.top)) below.set(p.top, below.get(p.top)! - 1);
+    }
+    if (draggingId >= 0 && this.puzzle.ropes[draggingId].alive) out.push(this.puzzle.ropes[draggingId]);
+    return out;
+  }
+
   /** 纽扣落孔时孔边的一圈涟漪 */
   private drawRipples(ctx: Ctx2D): void {
     const r0 = this.layout.cell * HOLE_R;
@@ -901,11 +992,8 @@ export class GameScene extends Scene {
     const yarnW = cell * 0.19;
     const pinR = cell * 0.25;
     const draggingId = this.drag?.moved ? this.drag.rope : -1;
-    const ropes = this.puzzle.aliveRopes.sort((p, q) => {
-      if (p.id === draggingId) return 1;
-      if (q.id === draggingId) return -1;
-      return p.z - q.z;
-    });
+    const ropes = this.drawOrder(draggingId);
+    const rank = new Map(ropes.map((r, i) => [r.id, i]));
     const scissorPulse = this.scissorsMode ? 0.5 + 0.5 * Math.sin(this.time * 8) : 0;
     const pts = new Map<number, Vec[]>();
     const widths = new Map<number, number>();
@@ -950,13 +1038,21 @@ export class GameScene extends Scene {
         squash: sq(r.id * 2 + 1),
       });
     }
-    // 环扣：在交叉处画出"勾住"的样子
     for (const l of this.links) {
-      const lower = pts.get(l.b);
-      if (!lower) continue;
+      const top = pts.get(l.a);
+      const bottom = pts.get(l.b);
+      if (!top || !bottom) continue;
       const h = toScreen(this.layout, l.h.x, l.h.y);
       const w = Math.min(widths.get(l.a)!, widths.get(l.b)!);
-      drawYarnWrap(ctx, h, lower, yarnColor(this.puzzle.ropes[l.a].color), yarnColor(this.puzzle.ropes[l.b].color), w, l.b * 97 + 13);
+      const topColor = yarnColor(this.puzzle.ropes[l.a].color);
+      const bottomColor = yarnColor(this.puzzle.ropes[l.b].color);
+      if (l.caught) {
+        // 被勾住：上层在交点盖住下层，下层从两侧绕过上层，挂在上面
+        drawYarnWrap(ctx, h, top, bottomColor, topColor, w, l.a * 97 + 13);
+      } else if (rank.get(l.a)! < rank.get(l.b)!) {
+        // 叠放顺序和上下关系不一致时（有环形压住），在交叉处补画上层
+        drawYarnPatch(ctx, h, top, topColor, widths.get(l.a)!, l.a * 97 + 13);
+      }
     }
   }
 

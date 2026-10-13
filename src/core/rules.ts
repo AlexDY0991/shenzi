@@ -2,7 +2,18 @@ import { BoardGeo, LevelData } from './board';
 
 /**
  * 规则层：游戏和求解器共用同一套判定，避免两边不一致。
- * 状态 pos：每根毛线两端的孔位 [a0, b0, a1, b1, ...]，已消除的毛线为 -1。
+ *
+ * 状态 State：
+ * - pos：每根毛线两端的孔位 [a0, b0, a1, b1, ...]，已消除的毛线为 -1
+ * - over：当前缠着的毛线对，编码 = 上层毛线 * 32 + 下层毛线（升序数组）
+ *
+ * 缠绕规则（上下层）：
+ * - 两根毛线交叉（或一根压在另一根的纽扣上）就缠在一起，交叉处一根在上、一根在下。
+ * - 挪动一根毛线时，它的纽扣是被拎起来放到新孔的：
+ *   - 它压在上面的那些交叉，如果新位置不再交叉，就松开了（拎走了）；
+ *   - 它被压在下面的那些交叉，无论挪到哪里都不会松开 —— 它还被勾着；
+ *   - 新产生的交叉，它都在上面。
+ * - 所以要从最上层的毛线开始一层层拆。一根毛线不再和任何毛线缠着时被理顺消除。
  *
  * 特殊机制：
  * - 缝住的纽扣（fixed）：这一端不能移动
@@ -20,8 +31,19 @@ export interface Rules {
   lockKey: number[];
 }
 
+export interface State {
+  pos: number[];
+  /** 缠着的毛线对：上层 * 32 + 下层，升序 */
+  over: number[];
+}
+
+export const pairCode = (top: number, bottom: number): number => top * 32 + bottom;
+export const pairTop = (code: number): number => code >> 5;
+export const pairBottom = (code: number): number => code & 31;
+
 export function makeRules(level: LevelData, geo = new BoardGeo(level.holes)): Rules {
   const n = level.ropes.length;
+  if (n > 32) throw new Error('一关最多 32 根毛线');
   const fixed = new Array(n * 2).fill(false);
   for (const [r, end] of level.fixed ?? []) fixed[r * 2 + end] = true;
   const sleep = new Array(n).fill(0);
@@ -29,6 +51,20 @@ export function makeRules(level: LevelData, geo = new BoardGeo(level.holes)): Ru
   const lockKey = new Array(geo.holeCount).fill(-1);
   for (const [h, r] of level.locks ?? []) lockKey[h] = r;
   return { geo, n, fixed, sleep, lockKey };
+}
+
+function geomTangled(R: Rules, pos: number[], i: number, j: number): boolean {
+  return R.geo.tangled(pos[i * 2], pos[i * 2 + 1], pos[j * 2], pos[j * 2 + 1]);
+}
+
+/** 开局状态：几何上缠着的毛线对，序号大的在上（关卡数据里毛线的顺序就是叠放顺序） */
+export function initialState(R: Rules, level: LevelData): State {
+  const pos = level.ropes.flatMap(([, a, b]) => [a, b]);
+  const over: number[] = [];
+  for (let i = 0; i < R.n; i++) {
+    for (let j = i + 1; j < R.n; j++) if (geomTangled(R, pos, i, j)) over.push(pairCode(j, i));
+  }
+  return { pos, over: over.sort((a, b) => a - b) };
 }
 
 export function deadCount(pos: number[]): number {
@@ -58,43 +94,67 @@ export function canLift(R: Rules, pos: number[], k: number): boolean {
   return pos[k] >= 0 && !R.fixed[k] && sleepLeft(R, pos, k >> 1) === 0;
 }
 
-/** 每根毛线和几根毛线缠着（已消除的为 -1），以及缠绕总对数 */
-export function tangleCounts(R: Rules, pos: number[]): { counts: number[]; pairs: number } {
-  const counts = new Array(R.n).fill(-1);
-  let pairs = 0;
-  for (let i = 0; i < R.n; i++) if (pos[i * 2] >= 0) counts[i] = 0;
-  for (let i = 0; i < R.n; i++) {
-    if (pos[i * 2] < 0) continue;
-    for (let j = i + 1; j < R.n; j++) {
-      if (pos[j * 2] < 0) continue;
-      if (R.geo.tangled(pos[i * 2], pos[i * 2 + 1], pos[j * 2], pos[j * 2 + 1])) {
-        counts[i]++;
-        counts[j]++;
-        pairs++;
-      }
-    }
+/** 把端点 k 挪到孔 hole（不检查合法性，不消除） */
+export function applyMove(R: Rules, s: State, k: number, hole: number): State {
+  const r = k >> 1;
+  const pos = s.pos.slice();
+  pos[k] = hole;
+  const over = new Set<number>();
+  for (const code of s.over) {
+    const top = pairTop(code);
+    const bottom = pairBottom(code);
+    if (top !== r && bottom !== r) over.add(code);
+    // 被压在下面：拎走也挣不脱，仍然勾着
+    else if (bottom === r) over.add(code);
+    // 压在上面：新位置还交叉才保留
+    else if (geomTangled(R, pos, r, bottom)) over.add(code);
   }
-  return { counts, pairs };
+  // 新产生的交叉：挪动的这根在上面
+  for (let x = 0; x < R.n; x++) {
+    if (x === r || pos[x * 2] < 0) continue;
+    if (over.has(pairCode(x, r)) || over.has(pairCode(r, x))) continue;
+    if (geomTangled(R, pos, r, x)) over.add(pairCode(r, x));
+  }
+  return { pos, over: [...over].sort((a, b) => a - b) };
+}
+
+/** 每根毛线和几根毛线缠着（已消除的为 -1） */
+export function tangleCounts(R: Rules, s: State): number[] {
+  const counts = new Array(R.n).fill(-1);
+  for (let i = 0; i < R.n; i++) if (s.pos[i * 2] >= 0) counts[i] = 0;
+  for (const code of s.over) {
+    counts[pairTop(code)]++;
+    counts[pairBottom(code)]++;
+  }
+  return counts;
 }
 
 /**
- * 消除所有不再缠绕的毛线。移除一根"自由"毛线不会改变其他毛线的缠绕数，所以一遍即可。
+ * 消除所有不再缠着的毛线。移除一根"自由"毛线不影响其他毛线的缠绕，所以一遍即可。
  * 返回新状态（不修改入参）。
  */
-export function settle(R: Rules, pos: number[]): { pos: number[]; cleared: number[]; alive: number; pairs: number } {
-  const { counts, pairs } = tangleCounts(R, pos);
-  const out = pos.slice();
+export function settle(R: Rules, s: State): { state: State; cleared: number[]; alive: number; pairs: number } {
+  const counts = tangleCounts(R, s);
+  const pos = s.pos.slice();
   const cleared: number[] = [];
   let alive = 0;
   counts.forEach((c, i) => {
     if (c < 0) return;
     if (c === 0) {
-      out[i * 2] = -1;
-      out[i * 2 + 1] = -1;
+      pos[i * 2] = -1;
+      pos[i * 2 + 1] = -1;
       cleared.push(i);
     } else alive++;
   });
-  return { pos: out, cleared, alive, pairs };
+  return { state: { pos, over: s.over }, cleared, alive, pairs: s.over.length };
+}
+
+/** 剪掉一根毛线：它和别人的缠绕全部解除 */
+export function applyCut(s: State, rope: number): State {
+  const pos = s.pos.slice();
+  pos[rope * 2] = -1;
+  pos[rope * 2 + 1] = -1;
+  return { pos, over: s.over.filter((c) => pairTop(c) !== rope && pairBottom(c) !== rope) };
 }
 
 /** 所有合法移动 [端点, 目标孔] */

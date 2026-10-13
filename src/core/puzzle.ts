@@ -1,5 +1,5 @@
 import { BoardGeo, LevelData } from './board';
-import { canLift, canPlace, legalMoves, makeRules, Rules, settle, sleepLeft, tangleCounts } from './rules';
+import { applyCut, applyMove, canLift, canPlace, initialState, legalMoves, makeRules, pairBottom, pairTop, Rules, settle, sleepLeft, State, tangleCounts } from './rules';
 
 export { BoardGeo } from './board';
 export type { LevelData } from './board';
@@ -24,6 +24,8 @@ export class Puzzle {
   readonly ropes: Rope[];
   stepsLeft: number;
   private zCounter: number;
+  /** 缠着的毛线对（上层 * 32 + 下层） */
+  private over: number[];
 
   constructor(readonly level: LevelData) {
     this.geo = new BoardGeo(level.holes);
@@ -31,6 +33,16 @@ export class Puzzle {
     this.ropes = level.ropes.map(([color, a, b], i) => ({ id: i, color, a, b, z: i, alive: true }));
     this.zCounter = this.ropes.length;
     this.stepsLeft = level.steps;
+    this.over = initialState(this.rules, level).over;
+  }
+
+  get state(): State {
+    return { pos: this.pos, over: this.over };
+  }
+
+  /** 当前缠着的毛线对 */
+  tangledPairs(): { top: number; bottom: number }[] {
+    return this.over.map((c) => ({ top: pairTop(c), bottom: pairBottom(c) }));
   }
 
   /** 规则层使用的紧凑状态 */
@@ -86,7 +98,7 @@ export class Puzzle {
 
   /** 当前每根活着的毛线与几根毛线缠绕 */
   tangleCounts(): Map<number, number> {
-    const { counts } = tangleCounts(this.rules, this.pos);
+    const counts = tangleCounts(this.rules, this.state);
     const m = new Map<number, number>();
     counts.forEach((c, i) => c >= 0 && m.set(i, c));
     return m;
@@ -94,9 +106,7 @@ export class Puzzle {
 
   /** 预览：把某根毛线的一端挪到 hole 后，会被理顺消除的毛线 */
   previewCleared(ropeId: number, end: RopeEnd, hole: number): number[] {
-    const pos = this.pos;
-    pos[endIndex(ropeId, end)] = hole;
-    return settle(this.rules, pos).cleared;
+    return settle(this.rules, applyMove(this.rules, this.state, endIndex(ropeId, end), hole)).cleared;
   }
 
   canMove(ropeId: number, end: RopeEnd, hole: number): boolean {
@@ -108,6 +118,7 @@ export class Puzzle {
   move(ropeId: number, end: RopeEnd, hole: number): number[] {
     if (!this.canMove(ropeId, end, hole)) return [];
     const r = this.ropes[ropeId];
+    this.over = applyMove(this.rules, this.state, endIndex(ropeId, end), hole).over;
     r[end] = hole;
     r.z = ++this.zCounter;
     this.stepsLeft--;
@@ -118,6 +129,7 @@ export class Puzzle {
   cut(ropeId: number): number[] {
     const r = this.ropes[ropeId];
     if (!r || !r.alive) return [];
+    this.over = applyCut(this.state, ropeId).over;
     r.alive = false;
     return [ropeId, ...this.clearUntangled()];
   }
@@ -127,7 +139,7 @@ export class Puzzle {
   }
 
   private clearUntangled(): number[] {
-    const { cleared } = settle(this.rules, this.pos);
+    const { cleared } = settle(this.rules, this.state);
     for (const id of cleared) this.ropes[id].alive = false;
     return cleared;
   }
