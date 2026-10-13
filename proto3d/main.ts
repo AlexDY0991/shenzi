@@ -2,7 +2,7 @@
 import levelsJson from '../src/levels/levels.json';
 import type { LevelData } from '../src/core/board';
 import { createSynth, AudioCtxLike } from '../src/platform/synth';
-import { Pin, Rope3, RopeWorld } from './physics';
+import { MAX_STRETCH, Pin, Rope3, RopeWorld } from './physics';
 import { buildBoard, buildButton, buildYarnBall, feltTexture, setupLights, THREE, YarnMesh, yarnTexture } from './scene';
 
 const LEVEL = (levelsJson as unknown as LevelData[])[1];
@@ -175,6 +175,9 @@ function boardPoint(e: PointerEvent, plane: THREE.Plane): THREE.Vector3 | null {
   return raycaster.ray.intersectPlane(plane, p);
 }
 
+/** 拖动时最近一次"没绷到极限"的纽扣位置 */
+const leash = { x: 0, z: 0, warned: false };
+
 let drag: { view: PinView; tx: number; tz: number; target: number; moved: boolean; sx: number; sy: number } | null = null;
 
 function occupied(hole: number): boolean {
@@ -212,6 +215,9 @@ canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture(e.pointerId);
   drag = { view: best, tx: best.pin.x, tz: best.pin.z, target: -1, moved: false, sx: e.clientX, sy: e.clientY };
   world.ropes[best.pin.rope].holdRest = true;
+  leash.x = best.pin.x;
+  leash.z = best.pin.z;
+  leash.warned = false;
   sfx.play('pick');
   haptic('light');
 });
@@ -235,8 +241,18 @@ canvas.addEventListener('pointermove', (e) => {
 
 function endDrag() {
   if (!drag) return;
-  const { view, target } = drag;
+  const { view } = drag;
+  let { target } = drag;
   world.ropes[view.pin.rope].holdRest = false;
+  // 纽扣被拽住、没能真正到达目标孔时，不能放进去，弹回原位
+  if (target >= 0) {
+    const [hx, hz] = LEVEL.holes[target];
+    if (Math.hypot(view.pin.x - hx, view.pin.z - hz) > 0.6) {
+      target = -1;
+      haptic('warning');
+      say('被勾住了，拉不过去～先挪压着它的那根');
+    }
+  }
   if (target >= 0 && target !== view.hole) {
     view.hole = target;
     moves++;
@@ -307,11 +323,30 @@ function frame(now: number) {
     v.group.visible = world.ropes[v.pin.rope].alive;
   }
 
-  // 定步长物理
+  // 定步长物理。拖动中如果毛线被勾住、已经绷到极限，纽扣就停在原地不再跟手（拉不脱）
   acc += dt;
+  const dragged = drag && drag.moved ? drag.view : null;
+  const keep = dragged ? { x: dragged.pin.x, z: dragged.pin.z, y: dragged.pin.y } : null;
   while (acc >= STEP) {
     world.step(STEP);
     acc -= STEP;
+    if (dragged && keep) {
+      const rope = world.ropes[dragged.pin.rope];
+      if (rope.stretch() > MAX_STRETCH) {
+        // 退回到绷紧前的位置
+        const back = Math.min(1, (rope.stretch() - MAX_STRETCH) * 6);
+        dragged.pin.x += (leash.x - dragged.pin.x) * back;
+        dragged.pin.z += (leash.z - dragged.pin.z) * back;
+        if (!leash.warned) {
+          leash.warned = true;
+          haptic('warning');
+          say('被勾住了，拉不动～先挪压着它的那根');
+        }
+      } else {
+        leash.x = dragged.pin.x;
+        leash.z = dragged.pin.z;
+      }
+    }
   }
 
   // 物理优先的消除：静止下来后，没有碰到任何别的毛线 / 纽扣的毛线被理顺

@@ -7,6 +7,10 @@ export const PIN_TOP = 0.17; // 纽扣顶面高度
 export const ATTACH_Y = 0.05; // 毛线接在纽扣中心偏下，绳头藏在纽扣里
 const SEG = 0.12; // 质点间距
 const GRAVITY = 28;
+/** 推挤量超过它，就认为这根毛线正被别的毛线挡住 / 勾住 */
+export const HOOK_PRESSURE = 0.06;
+/** 被勾住时最多能拉长到自然长度的多少倍 */
+export const MAX_STRETCH = 1.18;
 
 export interface Pin {
   x: number;
@@ -28,6 +32,8 @@ export class Rope3 {
   rest: number;
   holdRest = false;
   alive = true;
+  /** 上一步里被别的毛线 / 纽扣推挤的总量：大说明正被挡住、勾住 */
+  pressure = 0;
 
   constructor(
     readonly id: number,
@@ -93,7 +99,10 @@ export class RopeWorld {
       // 自然长度：跟随两端距离慢慢变化（拖动中只缩不长，拉远时毛线绷紧变细）
       const [a, b] = r.pins;
       const want = Math.hypot(b.x - a.x, b.z - a.z) * 1.01 + 0.02;
-      if (!r.holdRest || want < r.rest) r.rest += (want - r.rest) * Math.min(1, dt * (r.holdRest ? 12 : 4));
+      // 拖动中：没被挡住时毛线可以跟着变长；被别的毛线挡住、勾住时长度锁定（拉不长、拉不脱）
+      const free = r.pressure < HOOK_PRESSURE;
+      if (!r.holdRest || want < r.rest || free) r.rest += (want - r.rest) * Math.min(1, dt * (r.holdRest ? 12 : 4));
+      r.pressure = 0;
       for (let i = 1; i < r.n - 1; i++) {
         const vx = (r.x[i] - r.ox[i]) * 0.985;
         const vy = (r.y[i] - r.oy[i]) * 0.985;
@@ -194,6 +203,10 @@ export class RopeWorld {
             const d = Math.hypot(dx, dy, dz);
             if (d >= D || d < 1e-6) continue;
             const push = (D - d) / d / 2;
+            // 只算水平方向的推挤：上下叠着是正常压着，侧向顶住才是被挡住 / 勾住
+            const side = (Math.hypot(dx, dz) / d) * ((D - d) / 2);
+            A.pressure += side;
+            B.pressure += side;
             A.x[i] -= dx * push;
             A.y[i] -= dy * push;
             A.z[i] -= dz * push;
@@ -219,6 +232,7 @@ export class RopeWorld {
           if (d >= PIN_R + R || r.y[i] >= top + R) continue;
           const radial = PIN_R + R - d;
           const up = top + R - r.y[i];
+          if (radial <= up) r.pressure += radial;
           if (up < radial || d < 1e-4) r.y[i] = top + R;
           else {
             r.x[i] = p.x + (dx / d) * (PIN_R + R);
